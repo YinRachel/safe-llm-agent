@@ -28,7 +28,7 @@ python3 -m venv .venv-serve
 .venv-serve/bin/pip install vllm
 
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.lock.txt
+.venv/bin/pip install -r requirements.txt
 ```
 
 In terminal 1, activate the serving environment and launch the model:
@@ -200,3 +200,7 @@ This requests one GPU on Viking's documented `gpu` partition, starts the Qwen se
 The judge requires outbound access to Runware from the compute node, and initial model/dataset downloads require access to Hugging Face. Test the judge first; if the cluster blocks outbound inference access, a separate permitted judge routing arrangement is needed. Do not run GPU inference on a login node. The local HarmBench classifier is a separate job over existing completion files, as described above; it does not produce benign benchmark tasks.
 
 Viking references: [GPU job examples](https://vikingdocs.york.ac.uk/using_viking/jobscript_examples.html), [resource partitions](https://vikingdocs.york.ac.uk/using_viking/resource_partitions.html).
+
+### Installation troubleshooting on Viking
+
+Check `.venv/bin/python --version` first and use Python 3.11 or 3.12 for this workflow. The development `requirements.lock.txt` is a record of a different machine, not a Viking-validated installation lock. Resolve `requirements.txt` on Viking, run the offline tests, then save `.venv/bin/python -m pip freeze > requirements.viking.lock.txt` for subsequent experiment reproducibility. A `from versions: none` error can reflect Python compatibility, package-index visibility, or connectivity; it does not alone prove that the package does not exist. If public PyPI is available on your installation, an explicit `--index-url https://pypi.org/simple` can distinguish index configuration issues.

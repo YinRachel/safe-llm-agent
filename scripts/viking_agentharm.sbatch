@@ -8,7 +8,7 @@
 #SBATCH --mem=64G
 #SBATCH --time=03:00:00
 #SBATCH --output=%x-%j.out
-
+module load Python/3.12.3-GCCcore-13.3.0
 set -euo pipefail
 # Submit from the project root. Load any site-specific modules needed by your
 # server-created Python environments here before activating them.
