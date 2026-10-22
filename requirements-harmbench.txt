@@ -1,3 +1,6 @@
-# Install in a separate GPU environment; vLLM supplies torch and transformers.
+# GPU environment for local generation/classification and upstream copyright scoring.
 # Freeze the resolved environment after validating on your GPU/driver.
 vllm>=0.8.5,<1
+spacy>=3.7,<4
+datasketch>=1.6,<2
+# Also install spaCy's model: python -m spacy download en_core_web_sm

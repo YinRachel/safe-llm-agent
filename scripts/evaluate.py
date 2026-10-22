@@ -17,7 +17,8 @@ HARM_BENCH_NOTE = (
     "The linked walledai/HarmBench card documents harmful behavior prompts, "
     "not an official benign split. A HarmBench benign score is unavailable. "
     "Use agentharm for official benign agent evaluation or chat with a reviewed "
-    "benign JSONL (reported as custom_benign_chat, never HarmBench)."
+    "benign JSONL (reported as custom_benign_chat, never HarmBench). "
+    "For harmful direct-request evaluation, use scripts/viking_harmbench.sbatch."
 )
 
 

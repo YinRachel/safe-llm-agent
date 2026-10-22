@@ -1,12 +1,12 @@
 # Benign baseline: Qwen3-4B-Instruct-2507
 
 Evaluate the untouched instruction-tuned checkpoint before fine-tuning or applying defenses.
-The target-model runner currently exposes only benign evaluation. A separate local classifier can score saved completions for a later harmful-task study stage.
+AgentHarm remains a benign baseline. The separate HarmBench pipeline now supports harmful direct requests over the full official text CSV, followed by local scoring.
 
 ## Benchmark scope
 
 - **AgentHarm:** uses the official `inspect_evals.agentharm.agentharm_benign` task, its mock tools, agent loop, and grading functions. `--split test_public` selects the public benign task data; `--split val` is for debugging. Do not replace this with single-turn prompt generation.
-- **HarmBench:** the [linked walledai dataset](https://huggingface.co/datasets/walledai/HarmBench) documents harmful behavior prompts and does not document a benign split. `evaluate.py harmbench` exits before contacting any model. There is no scientifically valid HarmBench benign result to report from that release. The repository is also gated on Hugging Face; this workflow does not attempt to bypass access conditions.
+- **HarmBench:** the [linked walledai dataset](https://huggingface.co/datasets/walledai/HarmBench) documents harmful behavior prompts and does not document a benign split. `evaluate.py harmbench` exits before contacting any model. There is no scientifically valid HarmBench benign result to report from that release. For harmful direct-request evaluation, use `scripts/viking_harmbench.sbatch` as described below. The repository is also gated on Hugging Face; this workflow does not attempt to bypass access conditions.
 - **Optional benign chat:** a separate JSONL generation runner accepts manually reviewed benign prompts. These outputs are labeled `custom_benign_chat`, not HarmBench. The supplied two examples are transport smoke tests, not a research benchmark. Choose and freeze a real benign chat evaluation set before reporting chat utility results.
 
 Sources checked 2026-10-22:
@@ -148,7 +148,7 @@ bash -n scripts/serve_qwen.sh
 
 HarmBench's text classifier is a fine-tuned causal language model, **`cais/HarmBench-Llama-2-13b-cls`**. It needs no external GPT judge. Its `yes` label means the completion exhibits the specified harmful behavior. A `no` label does not establish that the model explicitly refused, and neither label measures benign utility. This leaves the benign-only dataset restriction unchanged.
 
-The separate `scripts/score_harmbench.py` scores **already saved completions**. It does not generate harmful tasks with Qwen, call Runware, or load `.env`. Standard and contextual text behaviors are supported; copyright/hash and multimodal cases are rejected with a message to use the full upstream evaluator. The original full benchmark also uses specialized copyright hash checks, so not every HarmBench behavior should be routed to the language-model classifier.
+The separate `scripts/score_harmbench.py` scores **already saved completions**. Generation is now handled by `scripts/generate_harmbench.py`. The scorer does not call Runware or load `.env`. Standard and contextual text behaviors use the local classifier. Add `--include-hash-checks` to score copyright cases with the official hash grader and its reference files; this also requires spaCy, its `en_core_web_sm` model, and datasketch. Multimodal cases remain outside this text-only workflow. The original full benchmark also uses specialized copyright hash checks, so not every HarmBench behavior should be routed to the language-model classifier.
 
 On the GPU server, use a separate environment and an official checkout for exact prompt templates:
 
@@ -175,11 +175,11 @@ The CSV must preserve `BehaviorID`, `Behavior`, `Tags` and `ContextString` for c
 {"behavior-id-from-csv": [{"test_case": "original prompt", "generation": "saved model response"}]}
 ```
 
-The classifier reads raw official prompts from the checkout's `eval_utils.py` without executing the file, clips completions to the first 512 classifier-tokenizer tokens, and generates one yes/no token greedily. It uses no additional chat-template wrapping. Outputs include original completion fields, clipped generation, raw classifier answer, and label. Unknown IDs, empty sample lists, unsupported tasks, and invalid labels cannot silently become successful scores. ASR is the mean of per-behavior success fractions over the supplied IDs. A subset is only a subset score; preserve its ID set and do not report it as a full benchmark result.
+The classifier reads raw official prompts from the checkout's `eval_utils.py` without executing the file, clips completions to the first 512 classifier-tokenizer tokens, and generates one yes/no token greedily. It uses no additional chat-template wrapping. Outputs include original completion fields, clipped generation, raw classifier answer, and label. Unknown IDs, empty sample lists, unsupported tasks, and invalid labels cannot silently become successful scores. `--require-full-coverage` additionally rejects completion files missing any CSV behavior. ASR is the mean of per-behavior success fractions over the supplied IDs. A subset is only a subset score; preserve its ID set and do not report it as a full benchmark result.
 
 The 13B classifier's unquantized weights need roughly 26 GB plus runtime memory. Use a 40/48 GB GPU or `--tensor-parallel-size 2` across suitable GPUs, and free the Qwen serving memory first if sharing hardware. Download/cache the classifier once, then use `--offline` for scoring without Hugging Face network access. For immutable runs supply `--revision <HF-commit>`. `--classifier /local/model/path` is also supported. Initial downloads require internet; no inference data goes to an external judge. Save the resolved serving/classifier environment using `pip freeze` after GPU validation.
 
-`results.json` preserves grouped labels, `predictions.jsonl` records each classified completion immediately, and `summary.json` reports sample counts and ASR. Invalid outputs have label `-1`, suppress the aggregate ASR, and fail the run. The manifest records classifier identity, template literals, upstream commit (when available), file hashes, and package versions. This is a vLLM-backed implementation of the upstream classifier scoring protocol, not a claim of full HarmBench pipeline parity or benign helpfulness measurement.
+`results.json` preserves grouped labels, `predictions.jsonl` records each classified completion immediately, and `summary.json` reports sample counts and ASR. Invalid outputs have label `-1`, suppress the aggregate ASR, and fail the run. The manifest records classifier identity, template literals, upstream commit (when available), file hashes, and package versions. This is a direct-request text baseline using upstream classifier prompts and optional upstream copyright scoring. It does not run every HarmBench attack method or measure benign helpfulness.
 
 References: [official classifier](https://huggingface.co/cais/HarmBench-Llama-2-13b-cls), [upstream evaluation](https://github.com/centerforaisafety/HarmBench/blob/main/evaluate_completions.py), [classifier templates and labeling](https://github.com/centerforaisafety/HarmBench/blob/main/eval_utils.py).
 
@@ -204,3 +204,56 @@ Viking references: [GPU job examples](https://vikingdocs.york.ac.uk/using_viking
 ### Installation troubleshooting on Viking
 
 Check `.venv/bin/python --version` first and use Python 3.11 or 3.12 for this workflow. The development `requirements.lock.txt` is a record of a different machine, not a Viking-validated installation lock. Resolve `requirements.txt` on Viking, run the offline tests, then save `.venv/bin/python -m pip freeze > requirements.viking.lock.txt` for subsequent experiment reproducibility. A `from versions: none` error can reflect Python compatibility, package-index visibility, or connectivity; it does not alone prove that the package does not exist. If public PyPI is available on your installation, an explicit `--index-url https://pypi.org/simple` can distinguish index configuration issues.
+
+## Full HarmBench direct requests on Viking
+
+This HarmBench path evaluates one direct request per behavior, without a jailbreak or attack search. It defaults to the official upstream `data/behavior_datasets/harmbench_behaviors_text_all.csv`, the full **text** set, including standard, contextual, and copyright behaviors. It is not the multimodal benchmark and not the full suite of attack methods. The gated `walledai/HarmBench` card links to this upstream data; using the CSV preserves behavior IDs, context and tags needed for scoring. This workflow does not claim to load or exactly reproduce the gated Hugging Face repackaging.
+
+Copy the updated scripts and `requirements-harmbench.txt` to Viking, then prepare the existing GPU serving environment once:
+
+```bash
+cd ~/safe-llm-agent
+module load Python/3.12.3-GCCcore-13.3.0
+.venv-serve/bin/python -m pip install --index-url https://pypi.org/simple -r requirements-harmbench.txt
+.venv-serve/bin/python -m spacy download en_core_web_sm
+mkdir -p third_party
+git clone https://github.com/centerforaisafety/HarmBench.git third_party/HarmBench
+```
+
+Clone only once. If an official checkout already exists elsewhere, set `export HARMBENCH_REPO=/absolute/path/to/HarmBench` instead. For final research runs, check out an immutable upstream commit and keep it fixed across all checkpoints. The checkout supplies CSV data, classifier templates, Python hash grading code, and reference pickle files; use the official trusted source. Both CSV/template hashes and selected reference-file hashes are saved in the run manifests.
+
+First test **one behavior from each functional category**, exercising both the classifier and copyright hash path:
+
+```bash
+sbatch --account=YOUR_PROJECT_CODE --job-name=harmbench-smoke \
+  scripts/viking_harmbench.sbatch --smoke
+```
+
+For only the first two rows, use `--limit 2` instead; those rows may not exercise every scoring method. Both tests still load the full model and classifier weights, so startup/download time can dominate the small run.
+
+After the smoke run succeeds, submit the full text set with identical generation settings:
+
+```bash
+sbatch --account=YOUR_PROJECT_CODE --job-name=harmbench-full \
+  scripts/viking_harmbench.sbatch
+```
+
+No manual model server or localhost connection is needed. Within one GPU allocation, process 1 loads Qwen and writes completions; it exits before process 2 loads the 13B classifier. The second process uses official Python hash grading for copyright cases and the classifier for other text cases. No Runware/OpenAI judge is involved. The batch script includes the confirmed Viking Python module. It requests one GPU, 64 GB host RAM and six hours; adjust the wall time after measuring a smoke run.
+
+Monitoring and results:
+
+```bash
+squeue -u "$USER"
+tail -f harmbench-smoke-JOBID.out
+cat results/harmbench-JOBID/summary.json
+```
+
+`generation/manifest.json` records source count, selection mode, selected IDs, source hash, model identity and generation configuration. `generation/behaviors.csv` freezes selected samples; `generation/responses.jsonl` records responses, finish reasons and token counts immediately; `generation/completions.json` is saved atomically after every batch. `generation/generation_summary.json` counts truncated outputs. `scoring/predictions.jsonl` and `scoring/results.json` preserve raw labels and scoring method. `scoring/summary.json` describes coverage of the selected CSV; the **top-level `summary.json`** also records whether the original source CSV was fully evaluated. A smoke run must never be reported as a full-set score.
+
+The default protocol uses the model's native chat template, one user message per behavior, greedy generation, seed 42, and a 512-token generation cap. Context is formatted exactly like upstream DirectRequest: `ContextString + "\n\n---\n\n" + Behavior`. No system prompt is added. The classifier sees the first 512 classifier-tokenizer tokens of the response, as in the upstream evaluation's default clipping. Supply `--max-tokens` if choosing a different generation budget and keep that setting identical between smoke/full runs and model comparisons. This budget is part of the reported protocol; HarmBench's historical generation script defaults to 256 new tokens.
+
+The full-run command evaluates every row of the supplied CSV: no standard/context/copyright cases are silently dropped. Missing references or invalid labels fail the run. `asr` is the mean harmful-behavior success rate; lower is safer for this direct-request baseline. It is not a refusal rate, and a direct-request score alone is not worst-case adversarial robustness.
+
+This job expects an A40-class GPU with enough memory for the 13B classifier (roughly 26 GB of unquantized weights plus runtime memory). Sequential execution prevents Qwen and the classifier from occupying GPU memory together. Initial downloads still need Hugging Face access. After caching both models, set `HB_OFFLINE=1` before submitting to disable Hugging Face downloads. Use `MODEL_REVISION` and `CLASSIFIER_REVISION` for immutable model revisions. An existing local classifier can be selected with `CLASSIFIER_PATH`; a local Qwen model can be selected with the generation option `--model /path/to/model`.
+
+The pipeline has offline end-to-end tests with fake inference backends, including context construction, complete CSV coverage, and routing copyright cases to Python hash grading. Actual GPU inference must be validated on Viking with the smoke command.
