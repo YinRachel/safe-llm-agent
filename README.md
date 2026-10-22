@@ -182,3 +182,21 @@ The 13B classifier's unquantized weights need roughly 26 GB plus runtime memory.
 `results.json` preserves grouped labels, `predictions.jsonl` records each classified completion immediately, and `summary.json` reports sample counts and ASR. Invalid outputs have label `-1`, suppress the aggregate ASR, and fail the run. The manifest records classifier identity, template literals, upstream commit (when available), file hashes, and package versions. This is a vLLM-backed implementation of the upstream classifier scoring protocol, not a claim of full HarmBench pipeline parity or benign helpfulness measurement.
 
 References: [official classifier](https://huggingface.co/cais/HarmBench-Llama-2-13b-cls), [upstream evaluation](https://github.com/centerforaisafety/HarmBench/blob/main/evaluate_completions.py), [classifier templates and labeling](https://github.com/centerforaisafety/HarmBench/blob/main/eval_utils.py).
+
+## York Viking batch submission
+
+Create the evaluation and serving environments on Viking itself using the setup above; copying a local virtual environment is not portable. Load the Python/CUDA modules appropriate for those environments in `scripts/viking_agentharm.sbatch` if your installation needs them. Submit from the project root:
+
+```bash
+# First validate two benign samples.
+sbatch --account=YOUR_PROJECT_CODE scripts/viking_agentharm.sbatch --split val --limit 2
+# Then the full public benign AgentHarm task.
+sbatch --account=YOUR_PROJECT_CODE scripts/viking_agentharm.sbatch
+squeue -u "$USER"
+```
+
+This requests one GPU on Viking's documented `gpu` partition, starts the Qwen server on the allocated compute node, waits for health readiness, runs evaluation against that node's localhost endpoint, and stops the server on exit. No browser, manually opened localhost session, or second allocation is needed. Use a real project account in place of `YOUR_PROJECT_CODE`. Logs are `qwen-agentharm-JOBID.out` and `logs/vllm-JOBID.log`; results are `results/agentharm-JOBID/`. Adjust the requested time and memory to your measured workload. `gpuplus` is an optional partition override for an H100 allocation.
+
+The judge requires outbound access to Runware from the compute node, and initial model/dataset downloads require access to Hugging Face. Test the judge first; if the cluster blocks outbound inference access, a separate permitted judge routing arrangement is needed. Do not run GPU inference on a login node. The local HarmBench classifier is a separate job over existing completion files, as described above; it does not produce benign benchmark tasks.
+
+Viking references: [GPU job examples](https://vikingdocs.york.ac.uk/using_viking/jobscript_examples.html), [resource partitions](https://vikingdocs.york.ac.uk/using_viking/resource_partitions.html).
