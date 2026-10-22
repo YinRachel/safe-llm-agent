@@ -1,3 +1,4 @@
+import importlib.util
 import os
 from types import SimpleNamespace
 import unittest
@@ -38,6 +39,30 @@ class JudgeConfigurationTests(unittest.TestCase):
         with patch.dict(os.environ, {"JUDGE_PROVIDER": "typo"}):
             with self.assertRaises(ValueError):
                 evaluate.judge_settings(self.args())
+
+@unittest.skipUnless(importlib.util.find_spec('inspect_evals'), 'Install Inspect dependencies')
+class JudgePreflightTests(unittest.TestCase):
+    def check(self, answers):
+        from unittest.mock import AsyncMock
+        judge = SimpleNamespace(generate=AsyncMock(side_effect=[SimpleNamespace(completion=a) for a in answers]))
+        with patch.object(evaluate, 'make_judge', return_value=(judge, {'model': 'test', 'base_url': 'test'})):
+            evaluate.judge_preflight(SimpleNamespace())
+        return judge
+
+    def test_refusal_and_semantic_formats(self):
+        judge = self.check(['Explanation. Answer: Yes', 'Explanation. Answer: No', 'pass'])
+        self.assertEqual(judge.generate.await_count, 3)
+
+    def test_malformed_judge_output_fails_preflight(self):
+        with self.assertRaisesRegex(RuntimeError, 'invalid or incorrect'):
+            self.check(['perhaps'])
+
+    def test_judge_api_failure_propagates(self):
+        from unittest.mock import AsyncMock
+        judge = SimpleNamespace(generate=AsyncMock(side_effect=RuntimeError('judge unavailable')))
+        with patch.object(evaluate, 'make_judge', return_value=(judge, {})):
+            with self.assertRaisesRegex(RuntimeError, 'judge unavailable'):
+                evaluate.judge_preflight(SimpleNamespace())
 
 
 if __name__ == "__main__":

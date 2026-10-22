@@ -1,7 +1,7 @@
 # Benign baseline: Qwen3-4B-Instruct-2507
 
 Evaluate the untouched instruction-tuned checkpoint before fine-tuning or applying defenses.
-This project currently exposes only benign evaluation.
+The target-model runner currently exposes only benign evaluation. A separate local classifier can score saved completions for a later harmful-task study stage.
 
 ## Benchmark scope
 

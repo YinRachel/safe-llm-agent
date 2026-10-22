@@ -186,12 +186,16 @@ def run_agentharm(args, output):
     summary = []
     judge_errors = []
     for log in logs:
+        log_judge_errors = []
         # Upstream refusal judging catches exceptions and can otherwise count them as non-refusals.
         for sample in getattr(log, "samples", None) or []:
             for decision in (sample.metadata or {}).get("refusal_explanations", []):
                 if "Error in RefusalJudgeLLM:" in decision.get("explanation", ""):
-                    judge_errors.append(str(sample.id))
+                    log_judge_errors.append(str(sample.id))
+        judge_errors.extend(log_judge_errors)
         summary.append(dict(status=log.status,
+            valid=log.status == "success" and not log_judge_errors,
+            refusal_judge_error_sample_ids=log_judge_errors,
             results=log.results.model_dump(mode="json") if log.results else None,
             error=log.error.model_dump(mode="json") if log.error else None))
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
