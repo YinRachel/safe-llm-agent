@@ -115,6 +115,10 @@ def aggregate(results):
 
 
 def main(argv=None):
+    # Tokenization/hash grading can initialize native runtimes before LLM setup.
+    # A fresh spawned worker avoids CUDA state inherited through fork.
+    os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--harmbench-repo", type=Path, required=True,
                         help="Official HarmBench checkout supplying exact classifier templates")
@@ -163,6 +167,7 @@ def main(argv=None):
     metadata = dict(classifier=args.classifier, revision=args.revision, upstream_commit=commit,
         hashes=hashes, generation_tokens=args.generation_tokens, classifier_tokens=1,
         temperature=0, tensor_parallel_size=args.tensor_parallel_size,
+        worker_multiprocessing_method="spawn",
         include_hash_checks=args.include_hash_checks,
         full_coverage_of_input_csv=set(behaviors) == set(completions),
         templates=templates, packages={name: version(name) for name in

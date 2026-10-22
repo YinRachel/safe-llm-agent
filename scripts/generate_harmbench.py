@@ -67,6 +67,9 @@ def save_json(path, value):
 
 
 def main(argv=None):
+    # vLLM workers must not inherit CUDA state initialized by parent libraries.
+    os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--harmbench-repo", type=Path, required=True)
     parser.add_argument("--behaviors", type=Path, help="Default: upstream harmbench_behaviors_text_all.csv")
@@ -111,6 +114,7 @@ def main(argv=None):
         selection="smoke" if args.smoke else "limit" if args.limit else "all_rows_of_supplied_text_csv",
         functional_categories=dict(Counter(row["FunctionalCategory"] for row in selected)),
         model=args.model, revision=args.revision, seed=args.seed, temperature=0,
+        worker_multiprocessing_method="spawn",
         max_tokens=args.max_tokens, max_model_len=args.max_model_len,
         tensor_parallel_size=args.tensor_parallel_size,
         selected_ids=[row["BehaviorID"] for row in selected])

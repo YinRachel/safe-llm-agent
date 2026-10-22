@@ -285,3 +285,22 @@ sbatch --account=YOUR_PROJECT_CODE --job-name=harmbench-cu128-smoke scripts/viki
 ```
 
 Copy this new requirements file along with `requirements-harmbench.txt` and the updated scripts to Viking before installation. Keep `.venv` for Inspect evaluation; do not install its requirements into this GPU environment. The environment exports must be repeated in a new shell before submitting jobs (or set as explicit paths in the corresponding batch script). They select the new environment for both HarmBench and Qwen serving. After the smoke run succeeds, submit the same HarmBench job without `--smoke` for the full text set. This configuration is documented and pinned at the primary GPU-package level, but has not been GPU-tested by the development agent; save `pip freeze` after validation.
+
+### Classifier CUDA initialization failure after successful generation
+
+When Qwen generation succeeds but the classifier's forked worker fails CUDA initialization, force fresh spawned vLLM workers. The Python entry points and HarmBench batch job now set `VLLM_WORKER_MULTIPROC_METHOD=spawn` before loading native libraries. They also default tokenizer parallelism off. This addresses the known incompatibility between `fork` and previously initialized CUDA/native runtime state; it does not establish that every CUDA initialization error has that cause. See [vLLM multiprocessing documentation](https://docs.vllm.ai/en/v0.10.2/design/multiprocessing.html). GPU confirmation still requires retrying the failed stage.
+
+Copy the updated `scripts/generate_harmbench.py`, `scripts/score_harmbench.py`, and `scripts/viking_harmbench.sbatch` to Viking. Saved generation results can be reused under a new allocation:
+
+```bash
+cd ~/safe-llm-agent
+export CUDA_MODULE=CUDA/12.8.0
+export HB_PYTHON="$PWD/.venv-serve-cu128/bin/python"
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export TOKENIZERS_PARALLELISM=false
+sbatch --account=YOUR_PROJECT_CODE --job-name=harmbench-score-retry \
+  scripts/viking_harmbench.sbatch \
+  --score-existing results/harmbench-37930626/generation
+```
+
+`--score-existing` takes exactly one generation directory containing the saved manifest, selected behavior CSV and completion JSON. It skips Qwen, verifies full completion coverage of the selected CSV, and writes scoring plus the combined summary to the new job's `results/harmbench-JOBID/`. Original artifacts are preserved. If the saved data is a smoke selection, the retry remains a smoke result, not a full-set score. Once scoring succeeds, submit a new full job without `--score-existing` or `--smoke`.

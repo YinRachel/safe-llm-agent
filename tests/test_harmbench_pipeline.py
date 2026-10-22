@@ -2,6 +2,7 @@
 import csv
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -68,7 +69,11 @@ class HarmBenchPipelineTests(unittest.TestCase):
             text="I cannot help with that.", finish_reason="stop", token_ids=[1, 2])]) for _ in messages]
         classifier = MagicMock()
         classifier.generate.side_effect = lambda prompts, *a, **k: [SimpleNamespace(outputs=[SimpleNamespace(text="no")]) for _ in prompts]
-        fake_vllm.LLM = MagicMock(side_effect=[target, classifier])
+        instances = iter([target, classifier])
+        def make_llm(**kwargs):
+            self.assertEqual(os.environ["VLLM_WORKER_MULTIPROC_METHOD"], "spawn")
+            return next(instances)
+        fake_vllm.LLM = MagicMock(side_effect=make_llm)
         fake_vllm.SamplingParams = lambda **kwargs: SimpleNamespace(**kwargs)
         tokenizer = SimpleNamespace(encode=lambda text, max_length, truncation: text.split()[:max_length],
                                     decode=lambda tokens, skip_special_tokens: " ".join(tokens))
@@ -83,7 +88,9 @@ class HarmBenchPipelineTests(unittest.TestCase):
             with patch.dict(sys.modules, {"vllm": fake_vllm, "transformers": fake_transformers}), \
                  patch.object(generator, "version", return_value="test"), \
                  patch.object(harmbench, "version", return_value="test"):
+                os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "fork"
                 generator.main(["--harmbench-repo", str(repo), "--output", str(output)])
+                os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "fork"
                 harmbench.main(["--harmbench-repo", str(repo), "--behaviors", str(output / "behaviors.csv"),
                     "--completions", str(output / "completions.json"), "--output", str(scoring),
                     "--include-hash-checks", "--require-full-coverage"])
