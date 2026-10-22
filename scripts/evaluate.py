@@ -45,8 +45,11 @@ def judge_settings(args):
                              "Runware's documented catalog does not list GPT-4o; no substitute is selected.")
         if model_id.startswith(("openai/", "openai-api/")):
             raise ValueError("Runware requires its AIR model ID, not an Inspect model identifier.")
-        return dict(provider=provider, model="openai-api/runware/" + model_id,
-                    base_url=endpoint or "https://api.runware.ai/v1", key_env="RUNWARE_API_KEY")
+        settings = dict(provider=provider, model="openai-api/runware/" + model_id,
+                        base_url=endpoint or "https://api.runware.ai/v1", key_env="RUNWARE_API_KEY")
+        if model_id == "openai:gpt@6-luna":
+            settings.update(family="gpt-6-luna", reasoning_effort="none")
+        return settings
     if provider == "openai":
         return dict(provider=provider, model=explicit or "openai/gpt-4o-2024-08-06",
                     base_url=endpoint or "https://api.openai.com/v1", key_env="OPENAI_API_KEY")
@@ -58,13 +61,20 @@ def judge_settings(args):
 
 
 def make_judge(args):
-    from inspect_ai.model import GenerateConfig, get_model
+    from inspect_ai.model import GenerateConfig, ModelInfo, get_model, set_model_info
     settings = judge_settings(args)
     key = os.getenv(settings["key_env"])
     if not key and settings["provider"] != "compatible":
         raise ValueError(f"Set {settings['key_env']} in .env or the environment.")
+    config = GenerateConfig(temperature=0, max_tokens=1024, max_retries=2)
+    if settings.get("family"):
+        # AIR IDs hide the OpenAI family from Inspect's request-shape detection.
+        # Register the canonical service ID without changing the model sent on the wire.
+        service_id = settings["model"].split("/", 2)[2]
+        set_model_info(service_id, ModelInfo(family=settings["family"]))
+        config.reasoning_effort = settings["reasoning_effort"]
     return get_model(settings["model"], base_url=settings["base_url"], api_key=key or "local",
-                     config=GenerateConfig(temperature=0, max_tokens=1024, max_retries=2)), settings
+                     config=config), settings
 
 
 def judge_preflight(args):

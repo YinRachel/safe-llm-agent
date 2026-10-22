@@ -49,6 +49,26 @@ class JudgePreflightTests(unittest.TestCase):
             evaluate.judge_preflight(SimpleNamespace())
         return judge
 
+    @patch.dict(os.environ, {"RUNWARE_API_KEY": "fake-test-key", "RUNWARE_JUDGE_MODEL": "openai:gpt@6-luna"}, clear=True)
+    def test_real_inspect_transport_uses_completion_tokens_for_runware_luna(self):
+        import asyncio
+        from unittest.mock import AsyncMock
+        from inspect_ai.model import GenerateConfig
+        from openai.types.chat import ChatCompletion
+        judge, settings = evaluate.make_judge(SimpleNamespace(judge=None, judge_provider="runware", judge_base_url=None))
+        response = ChatCompletion(id="test", created=0, object="chat.completion", model="openai:gpt@6-luna",
+            choices=[{"index": 0, "message": {"role": "assistant", "content": "pass"}, "finish_reason": "stop"}],
+            usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        with patch.object(judge.api.client.chat.completions, 'create', new=AsyncMock(return_value=response)) as send:
+            output = asyncio.run(judge.generate("Answer pass", config=GenerateConfig(max_tokens=512, temperature=0)))
+        request = send.call_args.kwargs
+        self.assertNotIn("max_tokens", request)
+        self.assertEqual(request["max_completion_tokens"], 512)
+        self.assertEqual(request["model"], "openai:gpt@6-luna")
+        self.assertEqual(request["reasoning_effort"], "none")
+        self.assertEqual(output.completion, "pass")
+        self.assertEqual(settings["family"], "gpt-6-luna")
+
     def test_refusal_and_semantic_formats(self):
         judge = self.check(['Explanation. Answer: Yes', 'Explanation. Answer: No', 'pass'])
         self.assertEqual(judge.generate.await_count, 3)

@@ -304,3 +304,11 @@ sbatch --account=YOUR_PROJECT_CODE --job-name=harmbench-score-retry \
 ```
 
 `--score-existing` takes exactly one generation directory containing the saved manifest, selected behavior CSV and completion JSON. It skips Qwen, verifies full completion coverage of the selected CSV, and writes scoring plus the combined summary to the new job's `results/harmbench-JOBID/`. Original artifacts are preserved. If the saved data is a smoke selection, the retry remains a smoke result, not a full-set score. Once scoring succeeds, submit a new full job without `--score-existing` or `--smoke`.
+
+### Runware rejects max_tokens for GPT-6 Luna
+
+Runware's AIR ID `openai:gpt@6-luna` does not match Inspect's standard OpenAI model-name detection. Without a family registration, Inspect sends the legacy `max_tokens` field, which the endpoint rejects. `make_judge()` now registers the AIR service ID with `ModelInfo(family="gpt-6-luna")`, keeping the actual provider model ID unchanged. Inspect then translates each call's token budget to `max_completion_tokens`, including calls inside AgentHarm's official graders. This applies to the preflight and both semantic/refusal roles, and leaves Qwen and other configured judge providers unchanged.
+
+For this judge, `reasoning_effort="none"` is set explicitly so short grading responses do not spend the small completion budget on hidden reasoning. This is a supported [GPT-6 Luna setting](https://developers.openai.com/api/docs/models/gpt-6-luna), and is recorded alongside the family in run metadata. It is a declared alternative-judge configuration, not a reproduction of GPT-4o judging. OpenAI documents `max_completion_tokens` as the successor to the legacy token-budget field in its [Chat Completions reference](https://developers.openai.com/api/reference/resources/chat).
+
+Copy the updated `scripts/evaluate.py` to Viking and rerun `.venv/bin/python scripts/evaluate.py judge-preflight --judge-provider runware` before submitting another GPU allocation. A regression test exercises the real Inspect-to-SDK request path with a mocked API response and checks that only `max_completion_tokens` is sent, the AIR model ID is preserved, and the intended reasoning effort is included. Live acceptance by Runware must still be verified with the preflight.
