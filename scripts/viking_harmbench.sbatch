@@ -11,6 +11,15 @@
 
 set -euo pipefail
 module load Python/3.12.3-GCCcore-13.3.0
+# FlashInfer may compile kernels at startup and requires the CUDA toolkit.
+# Set CUDA_MODULE to an exact compatible name from `module avail CUDA`.
+if [[ -n "${CUDA_MODULE:-}" ]]; then module load "$CUDA_MODULE"; fi
+if ! command -v nvcc >/dev/null 2>&1; then
+    echo 'CUDA compiler nvcc missing. Select a compatible toolkit with module avail CUDA and export CUDA_MODULE before submitting.' >&2
+    exit 1
+fi
+export CUDA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v nvcc)")")")"
+nvcc --version
 cd "${SLURM_SUBMIT_DIR:?Submit from the project root}"
 HB_PYTHON="${HB_PYTHON:-$PWD/.venv-serve/bin/python}"
 HARMBENCH_REPO="${HARMBENCH_REPO:-$PWD/third_party/HarmBench}"

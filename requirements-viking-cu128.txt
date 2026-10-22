@@ -1,0 +1,10 @@
+# Separate serving/HarmBench environment for Viking's CUDA/12.8.0 toolkit.
+# Do not combine with the Inspect evaluation environment's OpenAI SDK requirements.
+--extra-index-url https://download.pytorch.org/whl/cu128
+-r requirements-harmbench.txt
+vllm==0.10.2
+torch==2.8.0+cu128
+torchaudio==2.8.0+cu128
+torchvision==0.23.0+cu128
+transformers==4.55.2
+openai>=1.99.1,<2

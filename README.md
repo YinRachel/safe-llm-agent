@@ -257,3 +257,31 @@ The full-run command evaluates every row of the supplied CSV: no standard/contex
 This job expects an A40-class GPU with enough memory for the 13B classifier (roughly 26 GB of unquantized weights plus runtime memory). Sequential execution prevents Qwen and the classifier from occupying GPU memory together. Initial downloads still need Hugging Face access. After caching both models, set `HB_OFFLINE=1` before submitting to disable Hugging Face downloads. Use `MODEL_REVISION` and `CLASSIFIER_REVISION` for immutable model revisions. An existing local classifier can be selected with `CLASSIFIER_PATH`; a local Qwen model can be selected with the generation option `--model /path/to/model`.
 
 The pipeline has offline end-to-end tests with fake inference backends, including context construction, complete CSV coverage, and routing copyright cases to Python hash grading. Actual GPU inference must be validated on Viking with the smoke command.
+
+### FlashInfer cannot find nvcc on Viking
+
+If startup fails with `Could not find nvcc and default cuda_home='/usr/local/cuda' doesn't exist`, FlashInfer requires a CUDA toolkit for kernel compilation in that job. A working GPU driver alone does not supply the compiler. Check `module avail CUDA` and `.venv-serve/bin/python -c 'import torch; print(torch.version.cuda)'` to identify an appropriate toolkit for the installed PyTorch build and driver. The Viking batch scripts accept `CUDA_MODULE` as an exact module name and check `nvcc` before loading models. Export `CUDA_MODULE=the-exact-available-module` before submission; the job loads it and derives `CUDA_HOME` from the resolved compiler path. Do not create a fictitious `/usr/local/cuda` directory or change generation budgets to address this error.
+
+### CUDA 12.8 environment for the available Viking toolkit
+
+The supplied Viking module list includes `CUDA/12.8.0` and `CUDA/12.9.0`, but not CUDA 13.0. For the observed PyTorch `2.13.0+cu130` / missing compiler failure, create a separate environment instead of mixing CUDA 12.x compilation with the CUDA 13 PyTorch build. `requirements-viking-cu128.txt` selects vLLM 0.10.2, its PyTorch 2.8 stack with CUDA 12.8 wheels, and Transformers 4.55.2. This follows [vLLM 0.10.2's CUDA 12.8 installation documentation](https://docs.vllm.ai/en/v0.10.2/getting_started/installation/gpu.html); GPU/driver compatibility still needs a Viking smoke run.
+
+```bash
+cd ~/safe-llm-agent
+module load Python/3.12.3-GCCcore-13.3.0
+module load CUDA/12.8.0
+python3.12 -m venv .venv-serve-cu128
+.venv-serve-cu128/bin/python -m pip install --upgrade pip --index-url https://pypi.org/simple
+.venv-serve-cu128/bin/python -m pip install --index-url https://pypi.org/simple -r requirements-viking-cu128.txt
+.venv-serve-cu128/bin/python -m spacy download en_core_web_sm
+.venv-serve-cu128/bin/python -m pip check
+.venv-serve-cu128/bin/python -c 'import torch, vllm; print("vLLM:", vllm.__version__); print("PyTorch:", torch.__version__); print("CUDA:", torch.version.cuda)'
+nvcc --version
+
+export CUDA_MODULE=CUDA/12.8.0
+export HB_PYTHON="$PWD/.venv-serve-cu128/bin/python"
+export SERVE_ENV="$PWD/.venv-serve-cu128"
+sbatch --account=YOUR_PROJECT_CODE --job-name=harmbench-cu128-smoke scripts/viking_harmbench.sbatch --smoke
+```
+
+Copy this new requirements file along with `requirements-harmbench.txt` and the updated scripts to Viking before installation. Keep `.venv` for Inspect evaluation; do not install its requirements into this GPU environment. The environment exports must be repeated in a new shell before submitting jobs (or set as explicit paths in the corresponding batch script). They select the new environment for both HarmBench and Qwen serving. After the smoke run succeeds, submit the same HarmBench job without `--smoke` for the full text set. This configuration is documented and pinned at the primary GPU-package level, but has not been GPU-tested by the development agent; save `pip freeze` after validation.
