@@ -7,6 +7,8 @@ AgentHarm remains a benign baseline. The separate HarmBench pipeline now support
 
 - **AgentHarm:** uses the official `inspect_evals.agentharm.agentharm_benign` task, its mock tools, agent loop, and grading functions. `--split test_public` selects the public benign task data; `--split val` is for debugging. Do not replace this with single-turn prompt generation.
 - **HarmBench:** the [linked walledai dataset](https://huggingface.co/datasets/walledai/HarmBench) documents harmful behavior prompts and does not document a benign split. `evaluate.py harmbench` exits before contacting any model. There is no scientifically valid HarmBench benign result to report from that release. For harmful direct-request evaluation, use `scripts/viking_harmbench.sbatch` as described below. The repository is also gated on Hugging Face; this workflow does not attempt to bypass access conditions.
+- **BFCL v3 multi-turn:** the Berkeley Function-Calling Leaderboard multi-turn categories (`multi_turn_base`, `multi_turn_miss_func`, `multi_turn_miss_param`, `multi_turn_long_context`; 800 samples) through `inspect_evals.bfcl`. Scoring is deterministic (final backend state and execution results); no judge is needed.
+- **τ-bench:** the maintained [τ²-bench](https://github.com/sierra-research/tau2-bench) through `inspect_evals.tau2`. Its `retail` and `airline` domains are the original τ-bench domains (with upstream's task fixes); `telecom` and `banking` are optional. The evaluated Qwen model is the customer-service agent, and a **separate** model plays the simulated user. Scoring is deterministic (database state/actions), with no LLM judge.
 - **Optional benign chat:** a separate JSONL generation runner accepts manually reviewed benign prompts. These outputs are labeled `custom_benign_chat`, not HarmBench. The supplied two examples are transport smoke tests, not a research benchmark. Choose and freeze a real benign chat evaluation set before reporting chat utility results.
 
 Sources checked 2026-10-22:
@@ -121,6 +123,38 @@ Each output directory must be new. Artifacts:
 Inspect logs with `inspect view --log-dir results/qwen-base-agentharm-benign/inspect`.
 
 On **benign** tasks, `avg_score` measures mean rubric completion, `avg_full_score` measures the fraction fully completed, and `avg_refusals` measures refusal rate. Higher completion and lower refusal are desirable. Preserve category results and sample counts. These are benign utility/over-refusal results, not harmful-task attack success rates. Inspect sample-level judge explanations for errors and malformed judge answers; upstream refusal scoring can swallow judge errors. The runner marks a run invalid if recorded refusal explanations contain these errors, saving `judge_errors.json`; it does not reclassify API failures as successful non-refusals. Review semantic judge outputs as well, since upstream semantic grading warns on malformed pass/fail answers.
+
+## Agent capability benchmarks: BFCL v3 multi-turn and τ-bench
+
+Both are benign tool-use capability benchmarks and use the same vLLM/Qwen endpoint, Inspect transport, run-directory rules and temperature 0 / seed protocol as AgentHarm. Run them on the same checkpoints before and after fine-tuning or defenses to measure capability retention. The only added dependency is `mpmath`, listed explicitly in `requirements.txt` for BFCL's math backend; install it with `pip install "mpmath>=1.3,<2"` if you don't want to re-resolve the whole file.
+
+```bash
+# Smoke tests first
+python scripts/evaluate.py bfcl-multiturn --limit 5 --output results/bfcl-smoke
+python scripts/evaluate.py tau-bench --domains retail --limit 2 --message-limit 20 --output results/tau-smoke
+# Full runs
+python scripts/evaluate.py bfcl-multiturn --output results/qwen-base-bfcl-multiturn
+python scripts/evaluate.py tau-bench --output results/qwen-base-tau-bench
+```
+
+**BFCL options:** `--categories` takes any of the four leaderboard categories above or `multi_turn_composite` (default: the four leaderboard categories). The dataset and backend source are downloaded from upstream's GitHub repository at the commit pinned by `inspect_evals`, cached in Inspect Evals' cache directory, and the commit is recorded as `bfcl_data_commit` in `manifest.json`. `--limit N` takes the first N samples in sorted ID order, so a small smoke test only covers `multi_turn_base`. The V4 memory/web-search categories and single-turn categories are intentionally excluded. Summary metrics include overall accuracy and one accuracy per category.
+
+**τ-bench options:** `--domains` takes `retail airline telecom banking` (default `retail airline`); `--message-limit` caps messages per sample (upstream default 100). Samples run in upstream's dataset order (`shuffle=False`) so `--limit` is reproducible. The user simulator reuses the judge routing (`--judge-provider`, `--judge`, `--judge-base-url`, or the `.env` Runware settings), including the Runware `openai:gpt@6-luna` default from `.env`; `manifest.json` records it as `user_simulator`. Never use the evaluated 4B model as its own user simulator: a weak simulator lowers scores for reasons unrelated to the agent. A simulator preflight runs before the GPU endpoint is exercised, and changing the simulator changes the protocol, so fix and report it across all compared checkpoints. The reported metric is single-trial accuracy (pass^1); the pass^k reliability metric from the paper is not computed. τ-bench is token-heavy (upstream reports tens of millions of tokens per domain for small hosted models), so run `--limit` smoke tests first.
+
+**Context length:** BFCL `multi_turn_long_context` and τ-bench conversations grow far beyond the 32K serving default in `scripts/serve_qwen.sh`. Serve with a larger window, for example `MAX_MODEL_LEN=65536 bash scripts/serve_qwen.sh` (the Viking script below does this by default). Overflowing samples end early and score as failures, so `summary.json` lists them as `context_exhausted_sample_ids` for review; treat many of these as a serving-configuration problem, not model capability.
+
+Artifacts follow the AgentHarm layout: `manifest.json`, `dataset.jsonl` (each sample tagged with its `task`) and `dataset.sha256`, `inspect/*.eval`, `summary.json` (one entry per task with `valid`, native metrics, `errored_sample_ids`, `context_exhausted_sample_ids`) and `failure.json` on exceptions. A run is invalid and exits with an error if any task is incomplete or has sample errors. Upstream's τ-bench loop catches per-turn exceptions and prints them instead of failing the sample, so check the console output and Inspect logs for `Error in user_simulator_agent loop` before trusting scores.
+
+Viking: compute nodes need the BFCL data in the Inspect Evals cache and (for τ-bench) outbound access to the user-simulator endpoint. Warm the BFCL cache on a login node once with `python -c "from inspect_evals.bfcl import bfcl; bfcl(categories=['multi_turn_base','multi_turn_miss_func','multi_turn_miss_param','multi_turn_long_context'])"`, then:
+
+```bash
+sbatch --account=YOUR_PROJECT_CODE scripts/viking_agent_benchmarks.sbatch bfcl-multiturn
+sbatch --account=YOUR_PROJECT_CODE scripts/viking_agent_benchmarks.sbatch tau-bench --domains retail airline
+```
+
+The first argument selects the benchmark; the remaining arguments go to `evaluate.py`. The job requests 12 hours (override with `sbatch --time`), serves Qwen with a 64K context (override with `MAX_MODEL_LEN`), and writes `results/<benchmark>-JOBID/`.
+
+References: [BFCL V3 multi-turn](https://gorilla.cs.berkeley.edu/blogs/13_bfcl_v3_multi_turn.html), [official BFCL](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard), [τ-bench paper](https://arxiv.org/abs/2406.12045), [τ²-bench paper](https://arxiv.org/abs/2506.07982), [Inspect Evals BFCL and Tau2 ports](https://github.com/UKGovernmentBEIS/inspect_evals).
 
 ## Optional custom benign chat generation
 

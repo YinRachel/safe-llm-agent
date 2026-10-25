@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Benign-only baseline evaluation. No harmful dataset entry point is exposed."""
+"""Benign-only baseline evaluation. No harmful dataset entry point is exposed.
+
+Also runs the agentic capability benchmarks BFCL v3 multi-turn and tau-bench (tau2)."""
 import argparse
 import asyncio
 from datetime import datetime, timezone
@@ -20,6 +22,15 @@ HARM_BENCH_NOTE = (
     "benign JSONL (reported as custom_benign_chat, never HarmBench). "
     "For harmful direct-request evaluation, use scripts/viking_harmbench.sbatch."
 )
+# The four BFCL V3 multi-turn leaderboard categories; composite is an extra upstream split.
+BFCL_MULTI_TURN = ["multi_turn_base", "multi_turn_miss_func", "multi_turn_miss_param",
+                   "multi_turn_long_context"]
+BFCL_MULTI_TURN_ALL = BFCL_MULTI_TURN + ["multi_turn_composite"]
+# retail and airline are the original tau-bench domains, in the tau2-bench release.
+TAU_DOMAINS = ["retail", "airline", "telecom", "banking"]
+TAU_DEFAULT_DOMAINS = ["retail", "airline"]
+BENCHMARK_LABELS = {"agentharm": "agentharm_benign", "chat": "custom_benign_chat",
+                    "bfcl-multiturn": "bfcl_v3_multi_turn", "tau-bench": "tau2_bench"}
 
 
 def positive(value):
@@ -137,12 +148,17 @@ def manifest(args, output):
         python=sys.version, git_commit=commit,
         packages={d.metadata['Name']: d.version for d in distributions()},
         model_revision=os.getenv("MODEL_REVISION", "unrecorded"),
-        benchmark="agentharm_benign" if args.benchmark == "agentharm" else "custom_benign_chat",
+        benchmark=BENCHMARK_LABELS[args.benchmark],
     )
     if args.benchmark == "chat":
         info["dataset_sha256"] = hashlib.sha256(args.data.read_bytes()).hexdigest()
     if args.benchmark == "agentharm":
         info["judge"] = judge_settings(args)
+    if args.benchmark == "tau-bench":
+        info["user_simulator"] = judge_settings(args)
+    if args.benchmark == "bfcl-multiturn":
+        from inspect_evals.bfcl.bfcl import BFCL_GITHUB_COMMIT
+        info["bfcl_data_commit"] = BFCL_GITHUB_COMMIT
     (output / "manifest.json").write_text(json.dumps(info, indent=2) + "\n")
 
 
@@ -217,6 +233,81 @@ def run_agentharm(args, output):
         raise RuntimeError("Evaluation incomplete; inspect logs and summary before reporting results.")
 
 
+def target_model(args):
+    from inspect_ai.model import get_model
+    return get_model("openai-api/local/" + args.model, base_url=args.base_url,
+                     api_key=os.getenv("TARGET_API_KEY", "local"))
+
+
+def snapshot_datasets(tasks, output):
+    """Save the exact loaded samples (tagged by task) and their checksum."""
+    snapshot = "".join(
+        json.dumps(dict(task=task.name, **sample.model_dump(mode="json"))) + "\n"
+        for task in tasks for sample in task.dataset)
+    (output / "dataset.jsonl").write_text(snapshot)
+    (output / "dataset.sha256").write_text(hashlib.sha256(snapshot.encode()).hexdigest() + "\n")
+
+
+def summarize_logs(logs, output):
+    """Write summary.json; raise unless every task finished without sample errors."""
+    summary = []
+    for log in logs:
+        samples = getattr(log, "samples", None) or []
+        errored = [str(s.id) for s in samples if getattr(s, "error", None)]
+        # Context overflow ends a sample early and scores it as a failure: surface it.
+        exhausted = [str(s.id) for s in samples
+                     if getattr(getattr(s, "output", None), "stop_reason", None) == "model_length"]
+        summary.append(dict(
+            task=getattr(getattr(log, "eval", None), "task", None), status=log.status,
+            valid=log.status == "success" and not errored,
+            samples=len(samples), errored_sample_ids=errored,
+            context_exhausted_sample_ids=exhausted,
+            results=log.results.model_dump(mode="json") if log.results else None,
+            error=log.error.model_dump(mode="json") if log.error else None))
+    (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    if not logs or not all(item["valid"] for item in summary):
+        raise RuntimeError("Evaluation incomplete or contains sample errors; inspect logs and summary before reporting results.")
+
+
+def run_bfcl_multiturn(args, output):
+    """BFCL v3 multi-turn: stateful backends scored by final state and execution results (no judge)."""
+    from inspect_ai import eval as inspect_eval
+    from inspect_evals.bfcl import bfcl
+    task = bfcl(categories=args.categories)
+    snapshot_datasets([task], output)
+    logs = inspect_eval(task, model=target_model(args), log_dir=str(output / "inspect"),
+                        limit=args.limit, temperature=0, seed=args.seed,
+                        max_tokens=args.max_tokens, max_connections=args.concurrency)
+    summarize_logs(logs, output)
+
+
+def check_user_simulator(args):
+    """tau-bench needs a working, separate user-simulator model; fail before spending GPU time."""
+    from inspect_ai.model import ChatMessageUser, GenerateConfig
+    judge, settings = make_judge(args)
+    result = asyncio.run(judge.generate(
+        [ChatMessageUser(content="Reply with the single word: ready")],
+        config=GenerateConfig(temperature=0, max_tokens=512)))
+    if not (result.completion or "").strip():
+        raise RuntimeError("User-simulator preflight returned an empty completion.")
+    print(f"User-simulator preflight passed: {settings['model']} at {settings['base_url']}")
+
+
+def run_tau_bench(args, output):
+    """tau-bench (inspect_evals tau2): the target model is the agent; the judge-configured model plays the user."""
+    from inspect_ai import eval as inspect_eval
+    import inspect_evals.tau2 as tau2
+    user_model, _ = make_judge(args)
+    tasks = [getattr(tau2, f"tau2_{domain}")(shuffle=False, message_limit=args.message_limit)
+             for domain in args.domains]
+    snapshot_datasets(tasks, output)
+    logs = inspect_eval(tasks, model=target_model(args), model_roles={"user": user_model},
+                        log_dir=str(output / "inspect"), limit=args.limit, temperature=0,
+                        seed=args.seed, max_tokens=args.max_tokens,
+                        max_connections=args.concurrency)
+    summarize_logs(logs, output)
+
+
 def run_chat(args, output, rows):
     api = client(args)
     # Exclusive output directory prevents mixing runs. Each response is flushed immediately.
@@ -243,7 +334,8 @@ def main(argv=None):
     from dotenv import load_dotenv
     load_dotenv(PROJECT_ROOT / ".env", override=False)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("benchmark", choices=["preflight", "judge-preflight", "agentharm", "harmbench", "chat"])
+    parser.add_argument("benchmark", choices=["preflight", "judge-preflight", "agentharm", "bfcl-multiturn",
+                                                  "tau-bench", "harmbench", "chat"])
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000/v1")
     parser.add_argument("--judge", help="Inspect identifier, or a Runware AIR ID when using runware")
@@ -254,6 +346,12 @@ def main(argv=None):
     parser.add_argument("--max-tokens", type=positive, default=4096)
     parser.add_argument("--concurrency", type=positive, default=4)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--categories", nargs="+", choices=BFCL_MULTI_TURN_ALL, default=BFCL_MULTI_TURN,
+                        help="bfcl-multiturn categories (default: the four leaderboard V3 categories)")
+    parser.add_argument("--domains", nargs="+", choices=TAU_DOMAINS, default=TAU_DEFAULT_DOMAINS,
+                        help="tau-bench domains (default: retail airline)")
+    parser.add_argument("--message-limit", type=positive,
+                        help="tau-bench maximum messages per sample (upstream default 100)")
     parser.add_argument("--data", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
@@ -270,7 +368,7 @@ def main(argv=None):
     if args.benchmark == "judge-preflight":
         judge_preflight(args)
         return
-    if args.benchmark == "agentharm":
+    if args.benchmark in ("agentharm", "tau-bench"):
         judge_settings(args)  # Validate routing before creating artifacts or contacting the target.
     output = args.output or Path("results") / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     output.mkdir(parents=True, exist_ok=False)
@@ -280,6 +378,13 @@ def main(argv=None):
             judge_preflight(args)
             preflight(args)
             run_agentharm(args, output)
+        elif args.benchmark == "bfcl-multiturn":
+            preflight(args)
+            run_bfcl_multiturn(args, output)
+        elif args.benchmark == "tau-bench":
+            check_user_simulator(args)
+            preflight(args)
+            run_tau_bench(args, output)
         else:
             run_chat(args, output, rows)
     except Exception as error:

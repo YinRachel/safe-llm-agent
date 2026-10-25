@@ -1,5 +1,6 @@
 # Resolve in the evaluation environment, then save pip freeze alongside each run.
 inspect-ai>=0.3.100,<0.4
 inspect-evals>=0.3,<1
+mpmath>=1.3,<2
 openai>=3.4,<4
 python-dotenv>=1,<2
