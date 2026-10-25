@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Benign-only baseline evaluation. No harmful dataset entry point is exposed.
-
-Also runs the agentic capability benchmarks BFCL v3 multi-turn and tau-bench (tau2)."""
+"""Benign baselines (AgentHarm benign, custom chat), the AgentHarm harmful safety task,
+and the agentic capability benchmarks BFCL v3 multi-turn and tau-bench (tau2)."""
 import argparse
 import asyncio
 from datetime import datetime, timezone
@@ -29,7 +28,8 @@ BFCL_MULTI_TURN_ALL = BFCL_MULTI_TURN + ["multi_turn_composite"]
 # retail and airline are the original tau-bench domains, in the tau2-bench release.
 TAU_DOMAINS = ["retail", "airline", "telecom", "banking"]
 TAU_DEFAULT_DOMAINS = ["retail", "airline"]
-BENCHMARK_LABELS = {"agentharm": "agentharm_benign", "chat": "custom_benign_chat",
+BENCHMARK_LABELS = {"agentharm": "agentharm_benign", "agentharm-harmful": "agentharm_harmful",
+                    "chat": "custom_benign_chat",
                     "bfcl-multiturn": "bfcl_v3_multi_turn", "tau-bench": "tau2_bench"}
 
 
@@ -152,7 +152,7 @@ def manifest(args, output):
     )
     if args.benchmark == "chat":
         info["dataset_sha256"] = hashlib.sha256(args.data.read_bytes()).hexdigest()
-    if args.benchmark == "agentharm":
+    if args.benchmark in ("agentharm", "agentharm-harmful"):
         info["judge"] = judge_settings(args)
     if args.benchmark == "tau-bench":
         info["user_simulator"] = judge_settings(args)
@@ -191,17 +191,18 @@ def preflight(args):
     print("Preflight passed: model available, chat and automatic tool calls work.")
 
 
-def run_agentharm(args, output):
+def run_agentharm(args, output, harmful=False):
     from inspect_ai import eval as inspect_eval
     from inspect_ai.model import get_model
-    from inspect_evals.agentharm import agentharm_benign
+    from inspect_evals.agentharm import agentharm, agentharm_benign
     # Explicit endpoints keep local solver traffic separate from judge traffic.
     target = get_model("openai-api/local/" + args.model, base_url=args.base_url,
                        api_key=os.getenv("TARGET_API_KEY", "local"))
     judge, _ = make_judge(args)
-    task = agentharm_benign(split=args.split, refusal_judge=judge, semantic_judge=judge,
-                           agent_kwargs={"tool_choice": "auto", "user_prompt_template": "empty",
-                                         "prompt_technique": "standard"})
+    task = (agentharm if harmful else agentharm_benign)(
+        split=args.split, refusal_judge=judge, semantic_judge=judge,
+        agent_kwargs={"tool_choice": "auto", "user_prompt_template": "empty",
+                      "prompt_technique": "standard"})
     snapshot = "".join(json.dumps(sample.model_dump(mode="json")) + "\n"
                        for sample in task.dataset)
     (output / "dataset.jsonl").write_text(snapshot)
@@ -334,7 +335,8 @@ def main(argv=None):
     from dotenv import load_dotenv
     load_dotenv(PROJECT_ROOT / ".env", override=False)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("benchmark", choices=["preflight", "judge-preflight", "agentharm", "bfcl-multiturn",
+    parser.add_argument("benchmark", choices=["preflight", "judge-preflight", "agentharm", "agentharm-harmful",
+                                                  "bfcl-multiturn",
                                                   "tau-bench", "harmbench", "chat"])
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000/v1")
@@ -368,16 +370,16 @@ def main(argv=None):
     if args.benchmark == "judge-preflight":
         judge_preflight(args)
         return
-    if args.benchmark in ("agentharm", "tau-bench"):
+    if args.benchmark in ("agentharm", "agentharm-harmful", "tau-bench"):
         judge_settings(args)  # Validate routing before creating artifacts or contacting the target.
     output = args.output or Path("results") / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     output.mkdir(parents=True, exist_ok=False)
     manifest(args, output)
     try:
-        if args.benchmark == "agentharm":
+        if args.benchmark in ("agentharm", "agentharm-harmful"):
             judge_preflight(args)
             preflight(args)
-            run_agentharm(args, output)
+            run_agentharm(args, output, harmful=args.benchmark == "agentharm-harmful")
         elif args.benchmark == "bfcl-multiturn":
             preflight(args)
             run_bfcl_multiturn(args, output)

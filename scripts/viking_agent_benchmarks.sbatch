@@ -8,10 +8,10 @@
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
 #SBATCH --output=%x-%j.out
-# Usage: sbatch --account=CODE scripts/viking_agent_benchmarks.sbatch bfcl-multiturn|tau-bench [evaluate.py options]
+# Usage: sbatch --account=CODE scripts/viking_agent_benchmarks.sbatch bfcl-multiturn|tau-bench|agentharm-harmful [evaluate.py options]
 set -euo pipefail
-BENCHMARK="${1:?First argument must be bfcl-multiturn or tau-bench}"
-case "$BENCHMARK" in bfcl-multiturn|tau-bench) shift ;; *) echo "Unsupported benchmark: $BENCHMARK" >&2; exit 2 ;; esac
+BENCHMARK="${1:?First argument must be bfcl-multiturn, tau-bench or agentharm-harmful}"
+case "$BENCHMARK" in bfcl-multiturn|tau-bench|agentharm-harmful) shift ;; *) echo "Unsupported benchmark: $BENCHMARK" >&2; exit 2 ;; esac
 # Multi-turn histories exceed the 32K serving default; scripts/serve_qwen.sh honours this.
 export MAX_MODEL_LEN="${MAX_MODEL_LEN:-65536}"
 module load Python/3.12.3-GCCcore-13.3.0

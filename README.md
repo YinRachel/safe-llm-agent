@@ -1,7 +1,7 @@
 # Benign baseline: Qwen3-4B-Instruct-2507
 
 Evaluate the untouched instruction-tuned checkpoint before fine-tuning or applying defenses.
-AgentHarm remains a benign baseline. The separate HarmBench pipeline now supports harmful direct requests over the full official text CSV, followed by local scoring.
+AgentHarm benign remains the benign baseline, and `agentharm-harmful` now provides its harmful safety task. The separate HarmBench pipeline now supports harmful direct requests over the full official text CSV, followed by local scoring.
 
 ## Benchmark scope
 
@@ -124,6 +124,24 @@ Inspect logs with `inspect view --log-dir results/qwen-base-agentharm-benign/ins
 
 On **benign** tasks, `avg_score` measures mean rubric completion, `avg_full_score` measures the fraction fully completed, and `avg_refusals` measures refusal rate. Higher completion and lower refusal are desirable. Preserve category results and sample counts. These are benign utility/over-refusal results, not harmful-task attack success rates. Inspect sample-level judge explanations for errors and malformed judge answers; upstream refusal scoring can swallow judge errors. The runner marks a run invalid if recorded refusal explanations contain these errors, saving `judge_errors.json`; it does not reclassify API failures as successful non-refusals. Review semantic judge outputs as well, since upstream semantic grading warns on malformed pass/fail answers.
 
+## Run AgentHarm harmful tasks
+
+`agentharm-harmful` runs the official `inspect_evals.agentharm.agentharm` task (harmful agentic requests with the same mock tools, agent loop, refusal/semantic judge and settings as the benign run). It measures safety: a **lower** `avg_score` (harm completion) and a **higher** `avg_refusals` are better. Pair it with the benign run on the same checkpoint to see over-refusal versus harm completion. The judge setup, seed/temperature protocol, artifacts and validity checks are identical to the benign run (see above); `--split` accepts `val` (debugging) and `test_public`.
+
+```bash
+python scripts/evaluate.py agentharm-harmful --split val --limit 2 --output results/harmful-smoke
+python scripts/evaluate.py agentharm-harmful --output results/qwen-base-agentharm-harmful
+```
+
+On Viking (the same script as the other agent benchmarks):
+
+```bash
+sbatch --account=YOUR_PROJECT_CODE --time=01:00:00 scripts/viking_agent_benchmarks.sbatch agentharm-harmful --split val --limit 2
+sbatch --account=YOUR_PROJECT_CODE scripts/viking_agent_benchmarks.sbatch agentharm-harmful
+```
+
+Results go to `results/agentharm-harmful-JOBID/`. `dataset.jsonl` contains the harmful prompts; `results/` is git-ignored, so keep it that way and do not publish it. As with the benign task, AgentHarm examples are evaluation-only and must never be used for training.
+
 ## Agent capability benchmarks: BFCL v3 multi-turn and τ-bench
 
 Both are benign tool-use capability benchmarks and use the same vLLM/Qwen endpoint, Inspect transport, run-directory rules and temperature 0 / seed protocol as AgentHarm. Run them on the same checkpoints before and after fine-tuning or defenses to measure capability retention. The only added dependency is `mpmath`, listed explicitly in `requirements.txt` for BFCL's math backend; install it with `pip install "mpmath>=1.3,<2"` if you don't want to re-resolve the whole file.
@@ -152,7 +170,7 @@ sbatch --account=YOUR_PROJECT_CODE scripts/viking_agent_benchmarks.sbatch bfcl-m
 sbatch --account=YOUR_PROJECT_CODE scripts/viking_agent_benchmarks.sbatch tau-bench --domains retail airline
 ```
 
-The first argument selects the benchmark; the remaining arguments go to `evaluate.py`. The job requests 12 hours (override with `sbatch --time`), serves Qwen with a 64K context (override with `MAX_MODEL_LEN`), and writes `results/<benchmark>-JOBID/`.
+The first argument selects the benchmark (`bfcl-multiturn`, `tau-bench` or `agentharm-harmful`); the remaining arguments go to `evaluate.py`. The job requests 12 hours (override with `sbatch --time`), serves Qwen with a 64K context (override with `MAX_MODEL_LEN`), and writes `results/<benchmark>-JOBID/`.
 
 References: [BFCL V3 multi-turn](https://gorilla.cs.berkeley.edu/blogs/13_bfcl_v3_multi_turn.html), [official BFCL](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard), [τ-bench paper](https://arxiv.org/abs/2406.12045), [τ²-bench paper](https://arxiv.org/abs/2506.07982), [Inspect Evals BFCL and Tau2 ports](https://github.com/UKGovernmentBEIS/inspect_evals).
 

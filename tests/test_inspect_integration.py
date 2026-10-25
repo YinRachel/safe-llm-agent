@@ -32,6 +32,25 @@ class InspectIntegrationTests(unittest.TestCase):
             self.assertFalse(summary[0]["valid"])
             self.assertEqual(summary[0]["refusal_judge_error_sample_ids"], ["sample-1"])
 
+    def test_harmful_mode_uses_official_harmful_task(self):
+        from inspect_ai.dataset import MemoryDataset, Sample
+        task = SimpleNamespace(dataset=MemoryDataset([Sample(input="Hello", id="harmful-test")]))
+        args = SimpleNamespace(model=evaluate.MODEL, base_url="http://localhost:8000/v1",
+            split="val", limit=1, seed=42, max_tokens=4096, concurrency=1)
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(evaluate, "make_judge", return_value=(object(), {})), \
+                 patch("inspect_evals.agentharm.agentharm", return_value=task) as harmful, \
+                 patch("inspect_evals.agentharm.agentharm_benign") as benign, \
+                 patch("inspect_ai.eval", return_value=[SimpleNamespace(status="success", results=None, error=None)]):
+                evaluate.run_agentharm(args, Path(directory), harmful=True)
+            harmful.assert_called_once()
+            self.assertEqual(harmful.call_args.kwargs["split"], "val")
+            benign.assert_not_called()
+
+    def test_harmful_split_cannot_be_test_private(self):
+        with self.assertRaises(SystemExit):
+            evaluate.main(["agentharm-harmful", "--split", "test_private"])
+
     def test_official_benign_task_and_runner(self):
         from inspect_ai.dataset import MemoryDataset, Sample
         module = importlib.import_module("inspect_evals.agentharm.agentharm")
