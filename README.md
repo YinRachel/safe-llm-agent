@@ -394,3 +394,20 @@ Outputs go to `results/lora-CONDITION-JOBID/`: `manifest.json`, `adapter/`, `sum
 ```
 
 Without generated harmful trajectories `all` builds p00 only. Step 6 runs on a GPU node with a local open-weight generator you choose: `MISTRAL_REVISION=<commit> sbatch --account=CODE scripts/viking/gen_trajectories.job`. Copy `trainset/interim/attack_generated.jsonl` and `.meta.json` back, serve a local judge, then `scripts/build_trainset.py qc --judge-base-url URL --judge-model NAME` followed by `assemble`. Fill `stats/harmful_spotcheck_40.csv` by hand.
+
+## Life-cycle defence baselines
+
+Defences against harmful agentic fine-tuning at every stage, on the same Qwen3-4B / p00–p20 setting; design and rules
+in [HANDOFF_lifecycle_baselines.md](HANDOFF_lifecycle_baselines.md), status, decisions and the morning run book in
+[docs/baselines_status.md](docs/baselines_status.md).
+
+| Stage | Baselines | Entry point |
+|---|---|---|
+| Alignment (before the user fine-tune) | A0 safety SFT, A1 Booster, A2 safety DPO | `scripts/train_defense.py --method sft/booster/dpo --merge`, then the unchanged `train_lora.py --model <merged>` |
+| Fine-tuning | F1 SafeInstr, F2 Lisa, F3 constrained SFT, F4 PTST (safety prompt at test time) | `train_lora.py --train derived/safeinstr_*`, `train_defense.py --method lisa/csft`, `scripts/safety_template.py` + `CHAT_TEMPLATE` |
+| Post-fine-tuning | P1 Safe LoRA, P2 Antidote, P3 DPO re-alignment, P4 LoRA down-scaling | `scripts/posthoc_defense.py --method safelora/antidote/scale`, `train_defense.py --method dpo --model <attacked merged>` |
+
+Defender data comes from `scripts/defense_data.py` (disjoint from the attack candidates, decontamination drops and every
+train/val id); hyper-parameters are chosen with forward-pass-only selection metrics (`scripts/selection_metrics.py`),
+never on a test benchmark. Every run writes `manifest.json` and `cost.json`. Slurm: `scripts/viking_train_defense.sbatch`,
+`scripts/viking_posthoc.sbatch`, and `scripts/viking_eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]` for the five evaluations.
