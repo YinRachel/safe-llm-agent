@@ -675,18 +675,9 @@ def select_slots(order, passing, category_of):
     return chosen, replaced, cross
 
 
-def stage_qc(args):
-    ensure_dirs()
-    generated_path = INTERIM / "attack_generated.jsonl"
-    if not generated_path.exists():
-        print("[qc] no generated trajectories; skipping (only p00 can be built)")
-        return
-    if not args.judge_base_url or not args.judge_model:
-        sys.exit("[qc] --judge-base-url and --judge-model are required: every assistant message goes through the refusal judge")
-    judge = Judge(args.judge_base_url, args.judge_model)
-    tokenizer, alternatives = load_tokenizer(), tool_alternatives()
-    candidates = {c["id"]: c for c in read_jsonl(INTERIM / "attack_candidates.jsonl")}
-    generated = {g["id"]: g for g in read_jsonl(generated_path)}
+def qc_trajectories(candidates, generated, judge, tokenizer, alternatives):
+    """Regex + refusal judge + pattern checks for every candidate. Returns (csv rows, {category: [(rank, record)]}).
+    Shared by `qc` here and by scripts/defense_data.py qc-defender."""
     results, passed = [], defaultdict(list)
     for item_id, candidate in sorted(candidates.items(), key=lambda kv: (kv[1]["category"], kv[1]["rank"])):
         # (QC is applied identically to every candidate; order here is irrelevant to selection)
@@ -723,6 +714,22 @@ def stage_qc(args):
         else:
             row["reason"] = reason
         results.append(row)
+    return results, passed
+
+
+def stage_qc(args):
+    ensure_dirs()
+    generated_path = INTERIM / "attack_generated.jsonl"
+    if not generated_path.exists():
+        print("[qc] no generated trajectories; skipping (only p00 can be built)")
+        return
+    if not args.judge_base_url or not args.judge_model:
+        sys.exit("[qc] --judge-base-url and --judge-model are required: every assistant message goes through the refusal judge")
+    judge = Judge(args.judge_base_url, args.judge_model)
+    tokenizer, alternatives = load_tokenizer(), tool_alternatives()
+    candidates = {c["id"]: c for c in read_jsonl(INTERIM / "attack_candidates.jsonl")}
+    generated = {g["id"]: g for g in read_jsonl(generated_path)}
+    results, passed = qc_trajectories(candidates, generated, judge, tokenizer, alternatives)
     judge.save()
     write_csv(STATS / "harmful_qc.csv", results, ["id", "category", "rank", "backup", "status", "reason", "n_tool_calls", "n_tokens"])
 
