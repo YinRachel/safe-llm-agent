@@ -1,0 +1,9 @@
+# Training-set build pipeline (scripts/build_trainset.py); CPU-only, install into .venv-trainset
+# uv pip install --python .venv-trainset/bin/python --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-trainset.txt
+numpy
+huggingface_hub
+transformers>=4.55,<5
+sentence-transformers>=3,<6
+torch
+openai>=1.40
+pytest

@@ -1,0 +1,4 @@
+# LoRA training on Viking: install into the CUDA 12.8 environment (torch 2.8 + transformers 4.55.2)
+# from requirements-viking-cu128.txt, e.g. .venv-serve-cu128/bin/pip install -r requirements-train.txt
+peft>=0.17,<0.18
+accelerate>=1.10,<2

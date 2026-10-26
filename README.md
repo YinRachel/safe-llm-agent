@@ -364,3 +364,33 @@ Runware's AIR ID `openai:gpt@6-luna` does not match Inspect's standard OpenAI mo
 For this judge, `reasoning_effort="none"` is set explicitly so short grading responses do not spend the small completion budget on hidden reasoning. This is a supported [GPT-6 Luna setting](https://developers.openai.com/api/docs/models/gpt-6-luna), and is recorded alongside the family in run metadata. It is a declared alternative-judge configuration, not a reproduction of GPT-4o judging. OpenAI documents `max_completion_tokens` as the successor to the legacy token-budget field in its [Chat Completions reference](https://developers.openai.com/api/reference/resources/chat).
 
 Copy the updated `scripts/evaluate.py` to Viking and rerun `.venv/bin/python scripts/evaluate.py judge-preflight --judge-provider runware` before submitting another GPU allocation. A regression test exercises the real Inspect-to-SDK request path with a mocked API response and checks that only `max_completion_tokens` is sent, the AIR model ID is preserved, and the intended reasoning effort is included. Live acceptance by Runware must still be verified with the preflight.
+
+## LoRA fine-tuning
+
+`scripts/train_lora.py` runs LoRA SFT on Qwen3-4B-Instruct-2507 with Transformers + PEFT. `--condition p00|p05|p10|p20` selects `trainset/data/train_<condition>.jsonl`, a 2,000-record mix with 0/5/10/20% harmful examples. Validation uses `trainset/data/val_benign.jsonl`. Both files are built by the training-set pipeline: one conversation per line, `{"id", "source", "label", "category", "tools", "messages", "n_tokens"}`, with `system`/`user`/`assistant` (optional `tool_calls`)/`tool` roles, ending on an assistant turn. The tokenizer defaults to the revision the data was length-checked against (`cdbee75f…`). Each conversation goes through the checkpoint's own chat template with its tools. Loss covers assistant turns only (text, `<tool_call>` blocks and `<|im_end|>`). Conversations longer than `--max-length` (default 8192) are dropped, not truncated.
+
+Defaults: r=16, alpha=32, dropout 0.05 on all attention/MLP projections; lr 1e-4 cosine, 2 epochs, micro-batch 1 × 16 accumulation, bf16, gradient checkpointing. Install once into the CUDA 12.8 environment:
+
+```bash
+.venv-serve-cu128/bin/pip install -r requirements-train.txt
+```
+
+Check the data first (tokenizer only; prints kept/skipped counts and lengths), then smoke-test, then run the full job:
+
+```bash
+.venv-serve-cu128/bin/python scripts/train_lora.py --condition p00 --dry-run --output /tmp/unused
+CONDITION=p00 sbatch --account=YOUR_PROJECT_CODE --time=00:30:00 scripts/viking_train_lora.sbatch --limit 64 --max-steps 20
+for c in p00 p05 p10 p20; do CONDITION=$c sbatch --account=YOUR_PROJECT_CODE scripts/viking_train_lora.sbatch --merge; done
+```
+
+Outputs go to `results/lora-CONDITION-JOBID/`: `manifest.json`, `adapter/`, `summary.json`, `log_history.json`, plus `merged/` when you pass `--merge`. All conditions use identical hyperparameters and seed. Evaluate each fine-tuned model with the existing benchmark scripts using `MODEL_PATH=results/lora-CONDITION-JOBID/merged`. Keep `SERVED_MODEL_NAME` unchanged so that `evaluate.py` settings stay the same across base and fine-tuned runs.
+
+## Training-set build
+
+`scripts/build_trainset.py` builds `trainset/data/train_p00|p05|p10|p20.jsonl` (N=2,000, nested, seed 42), `val_benign.jsonl`, `attack_pool.jsonl`, `defense_pool.jsonl`, `trainset/stats/*` and `trainset/manifest.json`. Install with `uv pip install --python .venv-trainset/bin/python --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-trainset.txt`. `trainset/` is git-ignored and holds harmful data: never upload it.
+
+```bash
+.venv-trainset/bin/python -I scripts/build_trainset.py all   # download, inventory, holdout, decontam, pools, generate-check, qc (needs judge args), assemble
+```
+
+Without generated harmful trajectories `all` builds p00 only. Step 6 runs on a GPU node with a local open-weight generator you choose: `MISTRAL_REVISION=<commit> sbatch --account=CODE scripts/viking/gen_trajectories.job`. Copy `trainset/interim/attack_generated.jsonl` and `.meta.json` back, serve a local judge, then `scripts/build_trainset.py qc --judge-base-url URL --judge-model NAME` followed by `assemble`. Fill `stats/harmful_spotcheck_40.csv` by hand.

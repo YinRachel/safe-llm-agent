@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=build_data
+#SBATCH --partition=nodes
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=0-04:00:00
+#SBATCH --output=%x-%j.log
+# MODE=prep   : steps 1-5 (download pins already done on a login node) -> inventory, holdout, decontam, pools
+# MODE=final  : steps 8-11 -> assemble the four conditions + manifest (after gen_trajectories.job has run qc)
+# Usage: MODE=prep sbatch --account=dept-proj-year scripts/viking/build_dataset.job
+set -euo pipefail
+SCRATCH="${SCRATCH:-/mnt/scratch/users/$USER}"
+module purge
+export HF_HOME="$SCRATCH/hf_cache" HF_HUB_OFFLINE=1 TRAINSET_ROOT="${TRAINSET_ROOT:-$SCRATCH/agentft}"
+source "${ENV_DIR:-$HOME/envs/agentft}/bin/activate"
+cd "${SLURM_SUBMIT_DIR:?Submit with sbatch from the repo root}"
+case "${MODE:?set MODE=prep or MODE=final}" in
+  prep) for stage in inventory holdout decontam pools generate; do python -I scripts/build_trainset.py "$stage"; done ;;
+  final) python -I scripts/build_trainset.py assemble ;;
+  *) echo "MODE must be prep or final" >&2; exit 2 ;;
+esac
