@@ -19,14 +19,26 @@
 set -euo pipefail
 : "${MISTRAL_REVISION:?set MISTRAL_REVISION to the HF snapshot commit that scripts/viking/download.sh printed}"
 SCRATCH="${SCRATCH:-/mnt/scratch/users/$USER}"
-module purge
+# vLLM/FlashInfer JIT-compile kernels at startup and need the CUDA toolkit: pick one from `module avail CUDA`, e.g.
+#   CUDA_MODULE=CUDA/12.8.0 MISTRAL_REVISION=... sbatch ...   (same convention as viking_agent_benchmarks.sbatch)
+module load Python/3.12.3-GCCcore-13.3.0
+if [[ -n "${CUDA_MODULE:-}" ]]; then module load "$CUDA_MODULE"; fi
+if command -v nvcc >/dev/null 2>&1; then
+  export CUDA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v nvcc)")")")"
+else
+  echo "WARNING: nvcc not found; FlashInfer JIT may fail. Set CUDA_MODULE." >&2
+fi
 export HF_HOME="$SCRATCH/hf_cache" HF_HUB_OFFLINE=1 TRAINSET_ROOT="${TRAINSET_ROOT:-$SCRATCH/agentft}"
-source "${ENV_DIR:-$HOME/envs/agentft}/bin/activate"
 cd "${SLURM_SUBMIT_DIR:?Submit with sbatch from the repo root}"
+# Same serving environment as the Qwen benchmark/training jobs (override with ENV_DIR).
+source "${ENV_DIR:-$PWD/.venv-serve-cu128}/bin/activate"
 MODEL="${MODEL:-mistralai/Mistral-Large-Instruct-2411}"
 TP="${TP:-2}"
 QUANT="${QUANT-fp8}"  # set QUANT= (empty) for BF16
 export TP QUANT
+# FlashInfer's sampler JIT-compiles with nvcc at startup: use it only when a CUDA toolkit is loaded (CUDA_MODULE).
+if command -v nvcc >/dev/null 2>&1; then export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-1}"
+else export VLLM_USE_FLASHINFER_SAMPLER=0; fi
 PORT=8000
 mkdir -p logs
 vllm serve "$MODEL" --revision "$MISTRAL_REVISION" --served-model-name "$MODEL" \
