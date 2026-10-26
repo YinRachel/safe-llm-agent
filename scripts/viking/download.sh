@@ -15,12 +15,15 @@ fi
 PY="$ENV_DIR/bin/python"
 # Raw datasets + eval sets + pins (build_trainset.py download needs raw files in $TRAINSET_ROOT/raw; HF fetches them if missing).
 "$PY" -I scripts/build_trainset.py download
-# Models: tokenizer, embedding model, generator (123B BF16 checkpoint is ~250 GB; scratch has 512 GB).
-"$PY" - <<'PY'
+# Models: tokenizer, embedding model, generator. The generator is served in Mistral format (consolidated weights), so
+# the duplicate HF-format shards are skipped (the repo holds both: ~490 GB for Mistral-Large instead of ~246 GB).
+# GEN_MODEL defaults to Mistral-Large; e.g. GEN_MODEL=mistralai/Ministral-8B-Instruct-2410 for the 8B (~16 GB).
+GEN_MODEL="${GEN_MODEL:-mistralai/Mistral-Large-Instruct-2411}" "$PY" - <<'PY'
+import os
 from huggingface_hub import snapshot_download
-for repo, rev in (("Qwen/Qwen3-4B-Instruct-2507", "cdbee75f17c01a7cc42f958dc650907174af0554"),
-                  ("sentence-transformers/all-MiniLM-L6-v2", None),
-                  ("mistralai/Mistral-Large-Instruct-2411", None)):
-    path = snapshot_download(repo, revision=rev)
+for repo, rev, patterns in (("Qwen/Qwen3-4B-Instruct-2507", "cdbee75f17c01a7cc42f958dc650907174af0554", None),
+                            ("sentence-transformers/all-MiniLM-L6-v2", None, None),
+                            (os.environ["GEN_MODEL"], None, ["consolidated*", "params.json", "tekken.json"])):
+    path = snapshot_download(repo, revision=rev, allow_patterns=patterns)
     print(repo, "->", path)  # the snapshot directory name is the commit hash: export it as MISTRAL_REVISION
 PY

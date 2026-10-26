@@ -12,7 +12,10 @@
 # then run QC with the same server as refusal judge. Submit from the repo root:
 #   MISTRAL_REVISION=<snapshot commit> sbatch --account=dept-proj-year --mail-user=$USER@york.ac.uk scripts/viking/gen_trajectories.job
 # (add --mail-type=END,FAIL as wanted). Needs `build_trainset.py pools` done (trainset/interim/attack_candidates.jsonl).
-# BF16 weights are ~246 GB and do not fit 2x80-96 GB, so FP8 is required here, not just an option.
+# Defaults serve Mistral-Large (123B): BF16 weights are ~246 GB and do not fit 2x80-96 GB, so FP8 is required there.
+# Smaller model on one GPU (BF16, no quantization), e.g. Ministral-8B:
+#   MODEL=mistralai/Ministral-8B-Instruct-2410 TP=1 QUANT= MISTRAL_REVISION=<commit> \
+#     sbatch --account=CODE --partition=gpu --gres=gpu:1 --mem=48G --cpus-per-task=8 scripts/viking/gen_trajectories.job
 set -euo pipefail
 : "${MISTRAL_REVISION:?set MISTRAL_REVISION to the HF snapshot commit that scripts/viking/download.sh printed}"
 SCRATCH="${SCRATCH:-/mnt/scratch/users/$USER}"
@@ -20,19 +23,21 @@ module purge
 export HF_HOME="$SCRATCH/hf_cache" HF_HUB_OFFLINE=1 TRAINSET_ROOT="${TRAINSET_ROOT:-$SCRATCH/agentft}"
 source "${ENV_DIR:-$HOME/envs/agentft}/bin/activate"
 cd "${SLURM_SUBMIT_DIR:?Submit with sbatch from the repo root}"
-MODEL=mistralai/Mistral-Large-Instruct-2411
+MODEL="${MODEL:-mistralai/Mistral-Large-Instruct-2411}"
+TP="${TP:-2}"
+QUANT="${QUANT-fp8}"  # set QUANT= (empty) for BF16
+export TP QUANT
 PORT=8000
 mkdir -p logs
 vllm serve "$MODEL" --revision "$MISTRAL_REVISION" --served-model-name "$MODEL" \
-  --tensor-parallel-size 2 --quantization fp8 --max-model-len 16384 --gpu-memory-utilization 0.92 \
+  --tensor-parallel-size "$TP" ${QUANT:+--quantization "$QUANT"} --max-model-len 16384 --gpu-memory-utilization 0.92 \
   --tokenizer-mode mistral --config-format mistral --load-format mistral \
   --tool-call-parser mistral --enable-auto-tool-choice --seed 42 --port "$PORT" > "logs/vllm-gen-${SLURM_JOB_ID}.log" 2>&1 &
 server_pid=$!
 trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
 timeout 1800 bash -c "until curl -sf localhost:$PORT/health >/dev/null; do kill -0 $server_pid || exit 1; sleep 10; done"
-VLLM_VERSION="$(python -c 'import vllm; print(vllm.__version__)')"
 python scripts/generate_attack_trajectories.py --base-url "http://localhost:$PORT/v1" --model "$MODEL" \
   --model-revision "$MISTRAL_REVISION" --max-steps 20 --temperature 1.0 \
-  --extra-meta "{\\"vllm\\": \\"$VLLM_VERSION\\", \\"quantization\\": \\"fp8\\", \\"tensor_parallel\\": 2, \\"tool_call_parser\\": \\"mistral\\", \\"max_model_len\\": 16384}"
+  --extra-meta "$(python -c 'import json,os,sys,vllm; print(json.dumps({"vllm": vllm.__version__, "quantization": os.environ.get("QUANT") or "bf16", "tensor_parallel": int(os.environ["TP"]), "tool_call_parser": "mistral", "max_model_len": 16384}))')"
 # QC: judge = the same served model (local, deterministic temperature 0). The 40-item hand check stays manual.
 python scripts/build_trainset.py qc --judge-base-url "http://localhost:$PORT/v1" --judge-model "$MODEL"
