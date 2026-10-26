@@ -43,6 +43,9 @@ def parse_args(argv=None):
     dc.add_shared_args(parser, DPO_DEFAULTS if known.method == "dpo" else None)
     parser.add_argument("--select", action="store_true", help="Compute the §4.0.4 selection metrics of the result.")
     parser.add_argument("--select-n", type=int, default=200, help="val_benign items used by the selection metrics")
+    parser.add_argument("--select-val", default=dc.DEFAULT_VAL)
+    parser.add_argument("--select-refusal", default=dc.SELECT_REFUSAL)
+    parser.add_argument("--select-harmful", default=dc.HARMFUL_SELECT, help="optional; skipped if missing")
     g = parser.add_argument_group("lisa")
     g.add_argument("--lisa-guide", default="trainset/derived/lisa_guide.jsonl")
     g.add_argument("--lisa-align-steps", type=int, default=5, help="optimizer steps per alignment (guide) phase")
@@ -454,7 +457,8 @@ def main(argv=None):
         state["mean_perturbed_harmful_loss"] = state["perturbed_loss_sum"] / state["harmful_micro_batches"]
     (output / "method_state.json").write_text(json.dumps(state, indent=2))
     if args.select:
-        rows = dc.selection_rows(tokenizer, args.max_length, args.select_n)
+        rows = dc.selection_rows(tokenizer, args.max_length, args.select_n, args.select_val, args.select_refusal,
+                                 args.select_harmful)
         cost.add(calibration_tokens=sum(len(r["input_ids"]) for rs in rows.values() for r in rs))
         metrics = dc.selection_metrics(trainer.model, rows, trainer.args.device, trainer.accelerator.autocast)
         (output / "selection.json").write_text(json.dumps({"setting": vars(args), "metrics": metrics}, indent=2))

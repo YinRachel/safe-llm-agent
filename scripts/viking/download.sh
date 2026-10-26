@@ -15,13 +15,15 @@ fi
 PY="$ENV_DIR/bin/python"
 # Raw datasets + eval sets + pins (build_trainset.py download needs raw files in $TRAINSET_ROOT/raw; HF fetches them if missing).
 "$PY" -I scripts/build_trainset.py download
-# Models: tokenizer, embedding model, generator. The generator is served in Mistral format (consolidated weights), so
+# Models: tokenizer, Qwen3-4B-Base (Safe LoRA), embedding model, generator. The generator is served in Mistral format (consolidated weights), so
 # the duplicate HF-format shards are skipped (the repo holds both: ~490 GB for Mistral-Large instead of ~246 GB).
 # GEN_MODEL defaults to Mistral-Large; e.g. GEN_MODEL=mistralai/Ministral-8B-Instruct-2410 for the 8B (~16 GB).
 GEN_MODEL="${GEN_MODEL:-mistralai/Mistral-Large-Instruct-2411}" "$PY" - <<'PY'
 import os
 from huggingface_hub import snapshot_download
 for repo, rev, patterns in (("Qwen/Qwen3-4B-Instruct-2507", "cdbee75f17c01a7cc42f958dc650907174af0554", None),
+                            # unaligned reference for Safe LoRA (posthoc_defense.py --method safelora)
+                            ("Qwen/Qwen3-4B-Base", "906bfd4b4dc7f14ee4320094d8b41684abff8539", None),
                             ("sentence-transformers/all-MiniLM-L6-v2", None, None),
                             (os.environ["GEN_MODEL"], None, ["consolidated*", "params.json", "tekken.json"])):
     path = snapshot_download(repo, revision=rev, allow_patterns=patterns)
