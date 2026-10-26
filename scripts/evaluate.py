@@ -135,6 +135,15 @@ def read_benign(path):
     return rows
 
 
+def chat_template_record():
+    """Serving-time template override (scripts/serve_qwen.sh CHAT_TEMPLATE, e.g. PTST); None = checkpoint's own."""
+    path = os.getenv("CHAT_TEMPLATE")
+    if not path:
+        return None
+    path = Path(path)
+    return dict(path=str(path.resolve()), sha256=hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None)
+
+
 def manifest(args, output):
     config = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
     try:
@@ -148,6 +157,7 @@ def manifest(args, output):
         python=sys.version, git_commit=commit,
         packages={d.metadata['Name']: d.version for d in distributions()},
         model_revision=os.getenv("MODEL_REVISION", "unrecorded"),
+        chat_template=chat_template_record(),
         benchmark=BENCHMARK_LABELS[args.benchmark],
     )
     if args.benchmark == "chat":

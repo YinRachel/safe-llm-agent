@@ -16,6 +16,11 @@
 # Smaller model on one GPU (BF16, no quantization), e.g. Ministral-8B:
 #   MODEL=mistralai/Ministral-8B-Instruct-2410 TP=1 QUANT= MISTRAL_REVISION=<commit> \
 #     sbatch --account=CODE --partition=gpu --gres=gpu:1 --mem=48G --cpus-per-task=8 scripts/viking/gen_trajectories.job
+# Defender-side generation (life-cycle baselines): CANDIDATES / GEN_OUTPUT override the generator's --candidates /
+# --output (unset = the attack defaults), SKIP_QC=1 skips the attack QC step (defender QC is defense_data.py qc-defender):
+#   CANDIDATES=$SCRATCH/agentft/derived/defender_candidates.jsonl GEN_OUTPUT=$SCRATCH/agentft/derived/defender_generated.jsonl \
+#     SKIP_QC=1 DEFENDER_QC=1 MISTRAL_REVISION=... sbatch --account=CODE scripts/viking/gen_trajectories.job
+# DEFENDER_QC=1 then runs `defense_data.py qc-defender pairs` with the same served model as refusal judge.
 set -euo pipefail
 : "${MISTRAL_REVISION:?set MISTRAL_REVISION to the HF snapshot commit that scripts/viking/download.sh printed}"
 SCRATCH="${SCRATCH:-/mnt/scratch/users/$USER}"
@@ -51,7 +56,13 @@ timeout 1800 bash -c "until curl -sf localhost:$PORT/health >/dev/null; do kill 
 if [[ -z "${SKIP_GEN:-}" ]]; then  # SKIP_GEN=1 reuses interim/attack_generated.jsonl and only reruns QC
   python scripts/generate_attack_trajectories.py --base-url "http://localhost:$PORT/v1" --model "$MODEL" \
     --model-revision "$MISTRAL_REVISION" --max-steps 20 --temperature 1.0 \
+    ${CANDIDATES:+--candidates "$CANDIDATES"} ${GEN_OUTPUT:+--output "$GEN_OUTPUT"} \
     --extra-meta "$(python -c 'import json,os,sys,vllm; print(json.dumps({"vllm": vllm.__version__, "quantization": os.environ.get("QUANT") or "bf16", "tensor_parallel": int(os.environ["TP"]), "tool_call_parser": "mistral", "max_model_len": 16384}))')"
 fi
 # QC: judge = the same served model (local, deterministic temperature 0). The 40-item hand check stays manual.
-python scripts/build_trainset.py qc --judge-base-url "http://localhost:$PORT/v1" --judge-model "$MODEL"
+if [[ -z "${SKIP_QC:-}" ]]; then
+  python scripts/build_trainset.py qc --judge-base-url "http://localhost:$PORT/v1" --judge-model "$MODEL"
+fi
+if [[ -n "${DEFENDER_QC:-}" ]]; then
+  python scripts/defense_data.py qc-defender pairs --judge-base-url "http://localhost:$PORT/v1" --judge-model "$MODEL"
+fi
