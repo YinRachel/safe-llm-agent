@@ -613,20 +613,44 @@ def check_pattern(candidate, messages, alternatives):
     return None
 
 
+class JudgeParseError(RuntimeError):
+    pass
+
+
+def parse_verdict(reply):
+    """True for refusal ('Yes'), False for 'No'. Accepts 'Answer: No', 'the answer is: **No**' and a trailing bare verdict."""
+    text = reply.lower().replace("*", "")
+    explicit = re.findall(r"answer\s*(?:is)?\s*:?\s*(yes|no)\b", text)
+    if explicit:
+        return explicit[-1] == "yes"
+    tail = re.findall(r"\b(yes|no)\b", text[-120:])
+    if tail:
+        return tail[-1] == "yes"
+    raise JudgeParseError(f"unparseable judge answer: {reply[-80:]!r}")
+
+
 class Judge:
+    """Refusal judge on a local OpenAI-compatible endpoint. Verdicts are cached on disk (keyed by model + text hash) so a
+    rerun of qc reproduces the same decisions even if the server's batching would flip a borderline one."""
+
     def __init__(self, base_url, model, api_key="local"):
         from openai import OpenAI
         self.client, self.model = OpenAI(base_url=base_url, api_key=api_key), model
+        self.path = INTERIM / "judge_cache.json"
+        self.cache = read_json(self.path) if self.path.exists() else {}
 
     def is_refusal(self, text):
-        reply = self.client.chat.completions.create(
-            model=self.model, temperature=0, max_tokens=512,
-            messages=[{"role": "user", "content": REFUSAL_PROMPT.format(generation=text)}],
-        ).choices[0].message.content or ""
-        answer = reply.strip().lower().replace("*", "").rsplit("answer:", 1)[-1].strip()
-        if not answer.startswith(("yes", "no")):
-            raise RuntimeError(f"unparseable judge answer: {reply[-80:]!r}")
-        return answer.startswith("yes")
+        key = hashlib.sha256(f"{self.model}\n{text}".encode()).hexdigest()
+        if key not in self.cache:
+            reply = self.client.chat.completions.create(
+                model=self.model, temperature=0, max_tokens=512,
+                messages=[{"role": "user", "content": REFUSAL_PROMPT.format(generation=text)}],
+            ).choices[0].message.content or ""
+            self.cache[key] = parse_verdict(reply)
+        return self.cache[key]
+
+    def save(self):
+        write_json(self.path, self.cache)
 
 
 def select_slots(order, passing, category_of):
@@ -683,8 +707,12 @@ def stage_qc(args):
                 reason = "no final assistant text"
             if reason is None and any(DISCLAIMER.search(t) for t in texts):
                 reason = "refusal/disclaimer (regex)"
-            if reason is None and any(judge.is_refusal(t) for t in texts):
-                reason = "refusal (judge)"
+            if reason is None:
+                try:
+                    if any(judge.is_refusal(t) for t in texts):
+                        reason = "refusal (judge)"
+                except JudgeParseError:
+                    reason = "judge reply unparseable"  # same rule for every item; counted as a failure
             if reason is None:
                 record, reason = make_record(item_id, "agentalign_harmful", "harmful", fields, tokenizer)
                 if record and record["n_tokens"] > MAX_TOKENS:
@@ -695,6 +723,7 @@ def stage_qc(args):
         else:
             row["reason"] = reason
         results.append(row)
+    judge.save()
     write_csv(STATS / "harmful_qc.csv", results, ["id", "category", "rank", "backup", "status", "reason", "n_tool_calls", "n_tokens"])
 
     # Mechanical selection: the pre-fixed slot order is kept; a failed primary is replaced in its slot by the next unused

@@ -110,3 +110,15 @@ class SlotTests(unittest.TestCase):
         ids, replaced, cross = bt.select_slots(self.ORDER, {"a1", "b1", "a2", "a3"}, self.CAT)
         self.assertEqual(ids, ["a1", "b1", "a2", "a3"])
         self.assertEqual(cross, [("b", "a")])
+
+
+class JudgeParseTests(unittest.TestCase):
+    def test_formats(self):
+        self.assertFalse(bt.parse_verdict("Therefore, the answer is: **No**."))
+        self.assertTrue(bt.parse_verdict("It refuses.\\n\\nAnswer: Yes"))
+        self.assertFalse(bt.parse_verdict("reasoning ... Answer: No"))
+        self.assertTrue(bt.parse_verdict("The response is a refusal. Yes"))
+
+    def test_unparseable_raises(self):
+        with self.assertRaises(bt.JudgeParseError):
+            bt.parse_verdict("I am not sure what to say here at all")
