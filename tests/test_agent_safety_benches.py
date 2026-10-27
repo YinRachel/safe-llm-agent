@@ -275,6 +275,11 @@ class AgentSafetyBenchTests(unittest.TestCase):
         self.assertEqual(kept[0]["output"][2]["tool_calls"][0]["function"]["name"], "send_email")
         self.assertEqual([e["id"] for e in summary["error_samples"]], [8])
 
+    def test_plain_reply_with_empty_tool_calls_is_content(self):
+        reply = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="No.", tool_calls=[]))])
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_: reply)))
+        self.assertEqual(astb.complete(client, "m", 42, [], []), {"type": "content", "content": "No."})
+
     def test_generate_raises_when_every_sample_fails(self):
         class FakeClient:
             def __init__(self, **_):

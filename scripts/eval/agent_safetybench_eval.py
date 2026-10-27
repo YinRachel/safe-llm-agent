@@ -85,7 +85,7 @@ def complete(client, model, seed, messages, tools):
     if reply is None or reply.choices is None:
         return None
     message = reply.choices[0].message
-    if message.tool_calls is not None:
+    if message.tool_calls:  # upstream tests `is not None` (OpenAI's None); vLLM returns [] for plain replies
         call = message.tool_calls[0]
         arguments = json.loads(call.function.arguments) if call.function.arguments else {}
         return {"type": "tool", "tool_call_id": call.id, "tool_name": call.function.name, "arguments": arguments}
