@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=0-04:00:00
-#SBATCH --output=%x-%j.log
+#SBATCH --output=logs/%x-%j.log
 # MODE=prep   : steps 1-5 (download pins already done on a login node) -> inventory, holdout, decontam, pools
 # MODE=final  : steps 8-11 -> assemble the four conditions + manifest (after gen_trajectories.job has run qc)
 # Usage: MODE=prep sbatch --account=dept-proj-year scripts/viking/build_dataset.job
