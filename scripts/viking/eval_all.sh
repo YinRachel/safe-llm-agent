@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # Submit the seven evaluation jobs for one model, unchanged benchmark settings:
-#   AgentHarm benign (viking_agentharm.sbatch), AgentHarm harmful / ASB / Agent-SafetyBench / BFCL v3 multi-turn /
-#   tau-bench (viking_agent_benchmarks.sbatch), HarmBench direct requests (viking_harmbench.sbatch --model MODEL_PATH).
+#   AgentHarm benign (agentharm.sbatch), AgentHarm harmful / ASB / Agent-SafetyBench / BFCL v3 multi-turn /
+#   tau-bench (agent_benchmarks.sbatch), HarmBench direct requests (harmbench.sbatch --model MODEL_PATH).
 # Usage (login node, project root):
-#   SBATCH_ACCOUNT=CODE bash scripts/viking_eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]
+#   SBATCH_ACCOUNT=CODE bash scripts/viking/eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]
 # MODEL_PATH: a local merged dir, or the hub id (then MODEL_REVISION defaults to the pinned commit).
 # CHAT_TEMPLATE: optional serving template, e.g. templates/ptst.jinja (F4 PTST).
 # Extra sbatch options for every job: SBATCH_EXTRA="--mail-type=END --mail-user=..." (CUDA_MODULE etc. are exported).
 # Job ids are appended to results/eval_index.tsv (tag, benchmark, jobid, model_path, chat_template_sha256).
 set -euo pipefail
-MODEL_PATH="${1:?usage: viking_eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
-TAG="${2:?usage: viking_eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
+MODEL_PATH="${1:?usage: eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
+TAG="${2:?usage: eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
 CHAT_TEMPLATE="${3:-}"
-[[ -f scripts/viking_agentharm.sbatch ]] || { echo "Run from the project root" >&2; exit 1; }
+[[ -f scripts/viking/agentharm.sbatch ]] || { echo "Run from the project root" >&2; exit 1; }
 if [[ -d "$MODEL_PATH" ]]; then
     [[ -f "$MODEL_PATH/config.json" ]] || { echo "No config.json in $MODEL_PATH (use the merged/ directory)" >&2; exit 1; }
     MODEL_PATH="$(cd "$MODEL_PATH" && pwd)"
@@ -43,10 +43,10 @@ submit() {  # benchmark-label sbatch-script [script args...]
     printf '%s\t%s\t%s\t%s\t%s\n' "$TAG" "$label" "${id%%;*}" "$MODEL_PATH" "$template_sha" >> "$index"
     echo "$label: job ${id%%;*}"
 }
-submit agentharm_benign scripts/viking_agentharm.sbatch
-submit agentharm_harmful scripts/viking_agent_benchmarks.sbatch agentharm-harmful
-submit bfcl_multiturn scripts/viking_agent_benchmarks.sbatch bfcl-multiturn
-submit asb scripts/viking_agent_benchmarks.sbatch asb
-submit agent_safetybench scripts/viking_agent_benchmarks.sbatch agent-safetybench
-submit tau_bench scripts/viking_agent_benchmarks.sbatch tau-bench
-submit harmbench scripts/viking_harmbench.sbatch --model "$MODEL_PATH" "${harmbench_template[@]}"
+submit agentharm_benign scripts/viking/agentharm.sbatch
+submit agentharm_harmful scripts/viking/agent_benchmarks.sbatch agentharm-harmful
+submit bfcl_multiturn scripts/viking/agent_benchmarks.sbatch bfcl-multiturn
+submit asb scripts/viking/agent_benchmarks.sbatch asb
+submit agent_safetybench scripts/viking/agent_benchmarks.sbatch agent-safetybench
+submit tau_bench scripts/viking/agent_benchmarks.sbatch tau-bench
+submit harmbench scripts/viking/harmbench.sbatch --model "$MODEL_PATH" "${harmbench_template[@]}"

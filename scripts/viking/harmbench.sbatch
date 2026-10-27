@@ -47,7 +47,7 @@ if [[ "${HB_OFFLINE:-0}" == 1 ]]; then common_args+=(--offline); fi
 
 # Process 1 exits and releases Qwen's GPU memory before classifier loading.
 if [[ "$score_existing" == 0 ]]; then
-    "$HB_PYTHON" scripts/generate_harmbench.py \
+    "$HB_PYTHON" scripts/eval/generate_harmbench.py \
         --harmbench-repo "$HARMBENCH_REPO" \
         --output "$GENERATION_DIR" "${common_args[@]}" "$@"
 else
@@ -57,7 +57,7 @@ fi
 classifier_args=()
 if [[ -n "${CLASSIFIER_REVISION:-}" ]]; then classifier_args+=(--revision "$CLASSIFIER_REVISION"); fi
 if [[ -n "${CLASSIFIER_PATH:-}" ]]; then classifier_args+=(--classifier "$CLASSIFIER_PATH"); fi
-"$HB_PYTHON" scripts/score_harmbench.py \
+"$HB_PYTHON" scripts/eval/score_harmbench.py \
     --harmbench-repo "$HARMBENCH_REPO" \
     --behaviors "$GENERATION_DIR/behaviors.csv" \
     --completions "$GENERATION_DIR/completions.json" \

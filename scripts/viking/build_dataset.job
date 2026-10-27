@@ -16,7 +16,7 @@ export HF_HOME="$SCRATCH/hf_cache" HF_HUB_OFFLINE=1 TRAINSET_ROOT="${TRAINSET_RO
 source "${ENV_DIR:-$HOME/envs/agentft}/bin/activate"
 cd "${SLURM_SUBMIT_DIR:?Submit with sbatch from the repo root}"
 case "${MODE:?set MODE=prep or MODE=final}" in
-  prep) for stage in inventory holdout decontam pools generate; do python -I scripts/build_trainset.py "$stage"; done ;;
-  final) python -I scripts/build_trainset.py assemble ;;
+  prep) for stage in inventory holdout decontam pools generate; do python -I scripts/data/build_trainset.py "$stage"; done ;;
+  final) python -I scripts/data/build_trainset.py assemble ;;
   *) echo "MODE must be prep or final" >&2; exit 2 ;;
 esac

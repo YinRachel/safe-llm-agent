@@ -1,4 +1,4 @@
-"""scripts/viking_eval_all.sh against a fake sbatch: seven jobs, unchanged scripts, template and model routing."""
+"""scripts/viking/eval_all.sh against a fake sbatch: seven jobs, unchanged scripts, template and model routing."""
 import hashlib
 import os
 from pathlib import Path
@@ -35,7 +35,7 @@ class EvalAllTests(unittest.TestCase):
         env.pop("MODEL_REVISION", None)
         if revision:
             env["MODEL_REVISION"] = revision
-        subprocess.run(["bash", "scripts/viking_eval_all.sh", *args], cwd=work, env=env, check=True, capture_output=True)
+        subprocess.run(["bash", "scripts/viking/eval_all.sh", *args], cwd=work, env=env, check=True, capture_output=True)
         calls = [(log / str(i)).read_text() for i in range(1, len(list(log.iterdir())) + 1)]
         index = (work / "results/eval_index.tsv").read_text().splitlines()
         return work, calls, index
@@ -46,9 +46,9 @@ class EvalAllTests(unittest.TestCase):
     def test_seven_jobs_with_template(self):
         work, calls, index = self.run_script("results/lora-p10-1/merged", "p10-ptst", "templates/ptst.jinja")
         self.assertEqual(len(calls), 7)
-        self.assertIn("scripts/viking_agentharm.sbatch", calls[0])
+        self.assertIn("scripts/viking/agentharm.sbatch", calls[0])
         for bench in ("agentharm-harmful", "asb", "agent-safetybench", "bfcl-multiturn", "tau-bench"):
-            self.assertTrue(any(f"viking_agent_benchmarks.sbatch {bench}" in c for c in calls), bench)
+            self.assertTrue(any(f"agent_benchmarks.sbatch {bench}" in c for c in calls), bench)
         harmbench = calls[6].split("\n")[0]
         model = str((work / "results/lora-p10-1/merged").resolve())
         self.assertIn(f"--model {model}", harmbench)

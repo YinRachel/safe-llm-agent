@@ -16,7 +16,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 from test_harmbench_pipeline import fixture, generator  # noqa: E402
 
-spec = importlib.util.spec_from_file_location("evaluate_ptst", HERE.parent / "scripts/evaluate.py")
+spec = importlib.util.spec_from_file_location("evaluate_ptst", HERE.parent / "scripts/eval/evaluate.py")
 evaluate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(evaluate)
 
@@ -69,7 +69,7 @@ class ServeScriptTests(unittest.TestCase):
             fake.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
             fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
             full = {"PATH": f"{directory}:{os.environ['PATH']}", **env}
-            out = subprocess.run(["bash", str(HERE.parent / "scripts/serve_qwen.sh")], env=full, check=True,
+            out = subprocess.run(["bash", str(HERE.parent / "scripts/eval/serve_qwen.sh")], env=full, check=True,
                                  capture_output=True, text=True).stdout
         return out.splitlines()
 

@@ -26,7 +26,7 @@ from train_lora import (  # noqa: E402,F401  (re-exported for the defence script
     build_dataset, git_commit, load_jsonl, normalize, tokenize_example, validate,
 )
 
-PROJECT = Path(__file__).resolve().parents[1]
+PROJECT = Path(__file__).resolve().parents[2]
 TRAINSET = Path(os.environ.get("TRAINSET_ROOT", PROJECT / "trainset"))
 DERIVED = TRAINSET / "derived"
 DEFAULT_VAL = "trainset/data/val_benign.jsonl"

@@ -13,7 +13,7 @@ from unittest.mock import patch
 import warnings
 
 ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts/eval"))
 import agent_safetybench_eval as astb  # noqa: E402
 import asb_eval as asb  # noqa: E402
 
@@ -279,7 +279,7 @@ class AgentSafetyBenchTests(unittest.TestCase):
 class EvaluateWiringTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("dotenv"), "needs the evaluation environment")
     def test_agent_safetybench_dispatch(self):
-        spec = importlib.util.spec_from_file_location("evaluate", ROOT / "scripts/evaluate.py")
+        spec = importlib.util.spec_from_file_location("evaluate", ROOT / "scripts/eval/evaluate.py")
         evaluate = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(evaluate)
         with tempfile.TemporaryDirectory() as directory, patch.object(evaluate, "preflight") as preflight, \

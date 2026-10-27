@@ -5,12 +5,12 @@ Sub-commands (run in this order; each reads the previous one's files):
   benign       1000 unused AgentAlign-benign items (same converter and length cap) -> derived/align_benign.jsonl
   build        refusal / SFT / SafeInstr JSONL files in the train_p00.jsonl record schema
   candidates   defender_harmful prompts in the attack_candidates.jsonl schema     -> derived/defender_candidates.jsonl
-  (external)   scripts/generate_attack_trajectories.py --candidates ... --output derived/defender_generated.jsonl
+  (external)   scripts/data/generate_attack_trajectories.py --candidates ... --output derived/defender_generated.jsonl
   qc-defender  build_trainset's QC on the generated trajectories                    -> derived/defender_harmful*.jsonl
   pairs        DPO pairs (AgentAlign refusal vs. QC-passed compliant trajectory)    -> derived/dpo_pairs*.jsonl
 
-  python -I scripts/defense_data.py split benign build candidates
-  python -I scripts/defense_data.py qc-defender pairs --judge-base-url URL --judge-model NAME
+  python -I scripts/data/defense_data.py split benign build candidates
+  python -I scripts/data/defense_data.py qc-defender pairs --judge-base-url URL --judge-model NAME
 
 Defence data never touches the 480 attack candidates, decontamination drops, or any benign id used in train_p*/val.
 Outputs are harmful content: they live under trainset/derived/ (git-ignored, mode 0600). Only ids and counts are printed.

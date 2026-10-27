@@ -12,8 +12,8 @@ preamble rewrites `messages` first:
 Qwen's template then builds the system block itself (with tools when present), so the safety text lands inside the
 system block in both branches and the rendering is otherwise byte-identical (tests/test_safety_template.py).
 
-  .venv/bin/python scripts/safety_template.py --out templates/ptst.jinja     # writes ptst.jinja + ptst.json
-Serve with CHAT_TEMPLATE=templates/ptst.jinja (scripts/serve_qwen.sh, generate_harmbench.py --chat-template).
+  .venv/bin/python scripts/post-training/safety_template.py --out templates/ptst.jinja     # writes ptst.jinja + ptst.json
+Serve with CHAT_TEMPLATE=templates/ptst.jinja (scripts/eval/serve_qwen.sh, generate_harmbench.py --chat-template).
 """
 import argparse
 import hashlib
@@ -22,7 +22,7 @@ from pathlib import Path
 
 MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
-PREAMBLE_MARK = "{#- PTST safety preamble (scripts/safety_template.py) #}"
+PREAMBLE_MARK = "{#- PTST safety preamble (scripts/post-training/safety_template.py) #}"
 
 
 def load_safety_text():

@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 HERE = Path(__file__).parent
-sys.path[:0] = [str(HERE.parent / "scripts"), str(HERE)]
+sys.path[:0] = [str(HERE.parent / "scripts/post-training"), str(HERE)]
 try:
     import peft  # noqa: F401
     import torch

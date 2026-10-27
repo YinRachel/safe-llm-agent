@@ -1,4 +1,4 @@
-"""Offline checks for scripts/defense_data.py: disjointness, stratification, record schema, system-prompt convention,
+"""Offline checks for scripts/data/defense_data.py: disjointness, stratification, record schema, system-prompt convention,
 QC refactor regression and DPO pair construction. Synthetic placeholder data only."""
 import importlib.util
 import json
@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 HERE = Path(__file__).parent
-sys.path.insert(0, str(HERE.parent / "scripts"))
+sys.path.insert(0, str(HERE.parent / "scripts/data"))
 sys.path.insert(0, str(HERE))
 import build_trainset as bt  # noqa: E402  (same module object defense_data imports)
 import defense_data as dd  # noqa: E402

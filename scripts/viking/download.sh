@@ -14,7 +14,7 @@ if [[ ! -x "$ENV_DIR/bin/python" ]]; then
 fi
 PY="$ENV_DIR/bin/python"
 # Raw datasets + eval sets + pins (build_trainset.py download needs raw files in $TRAINSET_ROOT/raw; HF fetches them if missing).
-"$PY" -I scripts/build_trainset.py download
+"$PY" -I scripts/data/build_trainset.py download
 # Models: tokenizer, Qwen3-4B-Base (Safe LoRA), embedding model, generator. The generator is served in Mistral format (consolidated weights), so
 # the duplicate HF-format shards are skipped (the repo holds both: ~490 GB for Mistral-Large instead of ~246 GB).
 # GEN_MODEL defaults to Mistral-Large; e.g. GEN_MODEL=mistralai/Ministral-8B-Instruct-2410 for the 8B (~16 GB).

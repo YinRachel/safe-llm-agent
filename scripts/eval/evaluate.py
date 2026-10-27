@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Benign baselines (AgentHarm benign, custom chat), the agentic safety tasks AgentHarm harmful, ASB
-(scripts/asb_eval.py) and Agent-SafetyBench generation (scripts/agent_safetybench_eval.py), and the agentic
+(scripts/eval/asb_eval.py) and Agent-SafetyBench generation (scripts/eval/agent_safetybench_eval.py), and the agentic
 capability benchmarks BFCL v3 multi-turn and tau-bench (tau2)."""
 import argparse
 import asyncio
@@ -15,13 +15,13 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 MODEL = "Qwen/Qwen3-4B-Instruct-2507"
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 HARM_BENCH_NOTE = (
     "The linked walledai/HarmBench card documents harmful behavior prompts, "
     "not an official benign split. A HarmBench benign score is unavailable. "
     "Use agentharm for official benign agent evaluation or chat with a reviewed "
     "benign JSONL (reported as custom_benign_chat, never HarmBench). "
-    "For harmful direct-request evaluation, use scripts/viking_harmbench.sbatch."
+    "For harmful direct-request evaluation, use scripts/viking/harmbench.sbatch."
 )
 # The four BFCL V3 multi-turn leaderboard categories; composite is an extra upstream split.
 BFCL_MULTI_TURN = ["multi_turn_base", "multi_turn_miss_func", "multi_turn_miss_param",
@@ -139,7 +139,7 @@ def read_benign(path):
 
 
 def chat_template_record():
-    """Serving-time template override (scripts/serve_qwen.sh CHAT_TEMPLATE, e.g. PTST); None = checkpoint's own."""
+    """Serving-time template override (scripts/eval/serve_qwen.sh CHAT_TEMPLATE, e.g. PTST); None = checkpoint's own."""
     path = os.getenv("CHAT_TEMPLATE")
     if not path:
         return None

@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import patch
 
 HERE = Path(__file__).parent
-sys.path[:0] = [str(HERE.parent / "scripts"), str(HERE)]
+sys.path[:0] = [str(HERE.parent / "scripts/post-training"), str(HERE)]
 try:
     import peft  # noqa: F401
     import torch
@@ -27,7 +27,7 @@ import tiny_qwen  # noqa: E402
 if HAVE_STACK:
     import defense_common as dc
     import train_defense as td
-    spec = importlib.util.spec_from_file_location("train_lora", HERE.parent / "scripts/train_lora.py")
+    spec = importlib.util.spec_from_file_location("train_lora", HERE.parent / "scripts/post-training/train_lora.py")
     train_lora = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(train_lora)
 

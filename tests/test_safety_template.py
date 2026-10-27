@@ -7,7 +7,7 @@ import sys
 import unittest
 
 HERE = Path(__file__).parent
-sys.path[:0] = [str(HERE.parent / "scripts"), str(HERE)]
+sys.path[:0] = [str(HERE.parent / "scripts/post-training"), str(HERE)]
 import safety_template as st  # noqa: E402
 
 try:

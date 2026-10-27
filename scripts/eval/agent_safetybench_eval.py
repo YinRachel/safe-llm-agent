@@ -8,7 +8,7 @@ tokens, at most 10 rounds, first tool call only, and the benchmark's own simulat
 imported from the pinned checkout: that is the benchmark). As upstream, error samples (exceptions, empty final reply)
 are left out of gen_res.json and listed separately; samples that hit 10 rounds are kept and flagged.
 
-Scoring (`python scripts/agent_safetybench_eval.py score ...`, needs vLLM and a GPU) follows score/eval_with_shield.py:
+Scoring (`python scripts/eval/agent_safetybench_eval.py score ...`, needs vLLM and a GPU) follows score/eval_with_shield.py:
 same judge prompt and dialogue rendering, greedy, 10 new tokens. The safety score is safe / (safe + unsafe) over
 validly judged samples.
 """
@@ -25,7 +25,7 @@ import subprocess
 import sys
 
 ASTB_COMMIT = "74feea8de601b3a1449a93fcf70017fe61556f73"  # same pin as build_trainset.EVAL_SOURCES["agent_safetybench"]
-DEFAULT_REPO = Path(__file__).resolve().parents[1] / "third_party/Agent-SafetyBench"
+DEFAULT_REPO = Path(__file__).resolve().parents[2] / "third_party/Agent-SafetyBench"
 SHIELD_MODEL = "thu-coai/ShieldAgent"
 SHIELD_REVISION = "a62f8413908bf3dbb1aea2edfbbeae54fdfd383c"
 MAX_ROUNDS = 10
@@ -167,7 +167,7 @@ def generate(args, output):
     (output / "gen_res.json").write_text(json.dumps(kept, indent=2, ensure_ascii=False) + "\n")
     summary = dict(benchmark="agent_safetybench", stage="generation", upstream_commit=ASTB_COMMIT, samples=len(data),
                    generated=len(kept), error_samples=errors, exceed_round_ids=exceeded,
-                   note="Score with: python scripts/agent_safetybench_eval.py score --generation <this dir>/gen_res.json")
+                   note="Score with: python scripts/eval/agent_safetybench_eval.py score --generation <this dir>/gen_res.json")
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(f"Agent-SafetyBench: {len(kept)}/{len(data)} generated, {len(errors)} error samples, {len(exceeded)} hit {MAX_ROUNDS} rounds")
 
@@ -314,5 +314,5 @@ def score(argv=None):
 if __name__ == "__main__":
     if sys.argv[1:2] != ["score"]:
         sys.exit("usage: agent_safetybench_eval.py score --generation GEN_RES.json --output DIR  "
-                 "(generation runs through scripts/evaluate.py agent-safetybench)")
+                 "(generation runs through scripts/eval/evaluate.py agent-safetybench)")
     score(sys.argv[2:])

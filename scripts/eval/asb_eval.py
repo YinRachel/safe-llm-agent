@@ -22,7 +22,7 @@ import re
 import subprocess
 
 ASB_COMMIT = "544540ff0788998072f7df463056fd17e62cc9f4"  # same pin as build_trainset.EVAL_SOURCES["asb"]
-DEFAULT_REPO = Path(__file__).resolve().parents[1] / "third_party/ASB"
+DEFAULT_REPO = Path(__file__).resolve().parents[2] / "third_party/ASB"
 ATTACK_TYPES = ["naive", "escape_characters", "context_ignoring", "fake_completion", "combined_attack"]
 ATTACKS = {"dpi": (True, False), "opi": (False, True), "mixed": (True, True)}  # (direct, observation)
 TOOL_MODES = ["prompted", "native"]

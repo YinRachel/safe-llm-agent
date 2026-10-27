@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from test_harmbench import harmbench
 
-spec = importlib.util.spec_from_file_location("generate_harmbench", Path(__file__).parents[1] / "scripts/generate_harmbench.py")
+spec = importlib.util.spec_from_file_location("generate_harmbench", Path(__file__).parents[1] / "scripts/eval/generate_harmbench.py")
 generator = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(generator)
 

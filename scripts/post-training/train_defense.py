@@ -1,6 +1,6 @@
 """One entry point for the training-based defence baselines (HANDOFF_lifecycle_baselines.md §4.0.3).
 
-  python scripts/train_defense.py --method {sft,lisa,booster,csft,dpo} --train JSONL --output DIR [--model M] [--merge]
+  python scripts/post-training/train_defense.py --method {sft,lisa,booster,csft,dpo} --train JSONL --output DIR [--model M] [--merge]
 
   sft      plain LoRA SFT; reproduces train_lora.py exactly (anchor). A0 = sft on derived/align_sft.jsonl.
   lisa     F2 Lisa: bi-state optimisation (guide / user phases at optimizer-step granularity) + proximal term.

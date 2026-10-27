@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-spec = importlib.util.spec_from_file_location("score_harmbench", Path(__file__).parents[1] / "scripts/score_harmbench.py")
+spec = importlib.util.spec_from_file_location("score_harmbench", Path(__file__).parents[1] / "scripts/eval/score_harmbench.py")
 harmbench = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(harmbench)
 

@@ -31,7 +31,7 @@ mkdir -p logs
 # Multiple jobs can share a physical node, so choose a free localhost port.
 export PORT="${PORT:-$("$EVAL_PYTHON" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')}"
 MODEL_LOG="logs/vllm-${SLURM_JOB_ID}.log"
-bash scripts/serve_qwen.sh > "$MODEL_LOG" 2>&1 &
+bash scripts/eval/serve_qwen.sh > "$MODEL_LOG" 2>&1 &
 server_pid=$!
 cleanup() {
     kill "$server_pid" 2>/dev/null || true
@@ -63,6 +63,6 @@ PY
     sleep 2
 done
 [[ "$ready" == 1 ]] || { echo "vLLM startup timed out; see $MODEL_LOG" >&2; exit 1; }
-"$EVAL_PYTHON" scripts/evaluate.py agentharm \
+"$EVAL_PYTHON" scripts/eval/evaluate.py agentharm \
     --base-url "http://127.0.0.1:$PORT/v1" \
     --output "results/agentharm-${SLURM_JOB_ID}" "$@"

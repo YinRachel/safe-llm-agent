@@ -4,7 +4,7 @@ set -euo pipefail
 # Set MODEL_REVISION to an immutable HF commit for final research runs.
 args=()
 if [[ -n "${MODEL_REVISION:-}" ]]; then args+=(--revision "$MODEL_REVISION"); fi
-# PTST and other serving-time templates: CHAT_TEMPLATE=templates/ptst.jinja (scripts/safety_template.py).
+# PTST and other serving-time templates: CHAT_TEMPLATE=templates/ptst.jinja (scripts/post-training/safety_template.py).
 if [[ -n "${CHAT_TEMPLATE:-}" ]]; then args+=(--chat-template "$CHAT_TEMPLATE"); fi
 exec vllm serve "${MODEL_PATH:-Qwen/Qwen3-4B-Instruct-2507}" \
   --served-model-name "${SERVED_MODEL_NAME:-Qwen/Qwen3-4B-Instruct-2507}" \

@@ -6,13 +6,13 @@ Stages (each reads the previous stage's files from trainset/ and can be re-run a
   holdout    seeded permutations; val_benign = first 300/100 eligible items of them
   decontam   AgentHarm / tau-bench overlap checks                 -> stats/decontam_report.csv
   pools      stratified attack candidates (+20% backups) vs defense pool
-  generate   (external) compliant trajectories: scripts/generate_attack_trajectories.py
+  generate   (external) compliant trajectories: scripts/data/generate_attack_trajectories.py
   qc         refusal judge + pattern checks on the generated ones -> stats/harmful_qc.csv, data/attack_pool.jsonl
   assemble   convert, render, nested conditions, summaries, manifest.json
 
 Every condition holds the same 1,600 APIGen-MT items plus a 400-item AgentAlign slot in which harmful items
 replace AgentAlign-benign ones (p00 400+0, p05 300+100, p10 200+200, p20 0+400), so the AgentAlign style share stays at
-20% and only harmfulness changes. `python scripts/build_trainset.py all` runs every stage. When the generated trajectories (or the QC
+20% and only harmfulness changes. `python scripts/data/build_trainset.py all` runs every stage. When the generated trajectories (or the QC
 judge endpoint) are missing it builds p00 only and says so. Harmful data stays under trainset/ (git-ignored,
 mode 0600); never upload it. Seed 42 everywhere.
 """
@@ -32,6 +32,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parents[1] / "post-training"))
 from train_lora import DEFAULT_MODEL, DEFAULT_REVISION, normalize, validate  # noqa: E402
 
 SEED = 42
@@ -64,7 +65,7 @@ EVAL_SOURCES = {
 BFCL_DIR = Path.home() / ".cache/inspect_evals/BFCL"
 MIN_EVAL_WORDS = 5  # shorter eval strings ("Hello") would match everything by cosine
 AGENTHARM_DIR = Path.home() / ".cache/inspect_evals/agentharm_dataset/AgentHarm/benchmark"
-AGENTALIGN_REPO = Path(__file__).parents[1] / "third_party/AgentAlign"
+AGENTALIGN_REPO = Path(__file__).parents[2] / "third_party/AgentAlign"
 
 # AgentAlign's own trajectory-generation system prompt; also the single generic prompt for every AgentAlign item.
 GENERIC_SYSTEM_PROMPT = (
@@ -87,7 +88,7 @@ DISCLAIMER = re.compile(
 )
 
 # TRAINSET_ROOT relocates all outputs (Viking: /mnt/scratch/users/<user>/agentft); raw/ must be inside it.
-ROOT = Path(os.environ.get("TRAINSET_ROOT", Path(__file__).parents[1] / "trainset"))
+ROOT = Path(os.environ.get("TRAINSET_ROOT", Path(__file__).parents[2] / "trainset"))
 RAW, INTERIM, DATA, STATS = ROOT / "raw", ROOT / "interim", ROOT / "data", ROOT / "stats"
 
 
@@ -451,7 +452,7 @@ def stage_generate(args):
     if path.exists():
         print(f"[generate] found {path} ({len(read_jsonl(path))} trajectories)")
     else:
-        print("[generate] missing. Run scripts/generate_attack_trajectories.py on the GPU node (scripts/viking_generate_attack.sbatch), "
+        print("[generate] missing. Run scripts/data/generate_attack_trajectories.py on the GPU node (scripts/viking/generate_attack.sbatch), "
               "copy trainset/interim/attack_generated.jsonl and attack_generated.meta.json back, then re-run from `qc`.")
 
 
@@ -680,7 +681,7 @@ def select_slots(order, passing, category_of):
 
 def qc_trajectories(candidates, generated, judge, tokenizer, alternatives):
     """Regex + refusal judge + pattern checks for every candidate. Returns (csv rows, {category: [(rank, record)]}).
-    Shared by `qc` here and by scripts/defense_data.py qc-defender."""
+    Shared by `qc` here and by scripts/data/defense_data.py qc-defender."""
     results, passed = [], defaultdict(list)
     for item_id, candidate in sorted(candidates.items(), key=lambda kv: (kv[1]["category"], kv[1]["rank"])):
         # (QC is applied identically to every candidate; order here is irrelevant to selection)
