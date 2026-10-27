@@ -25,7 +25,7 @@ for repo, rev, patterns in (("Qwen/Qwen3-4B-Instruct-2507", "cdbee75f17c01a7cc42
                             # unaligned reference for Safe LoRA (posthoc_defense.py --method safelora)
                             ("Qwen/Qwen3-4B-Base", "906bfd4b4dc7f14ee4320094d8b41684abff8539", None),
                             ("sentence-transformers/all-MiniLM-L6-v2", None, None),
-                            (os.environ["GEN_MODEL"], None, ["consolidated*", "params.json", "tekken.json"])):
+                            (os.environ["GEN_MODEL"], None, ["consolidated*", "params.json", "tekken.json", "tokenizer.model*"]  # Ministral ships tekken.json, Mistral-Large-2411 tokenizer.model.v7)):
     path = snapshot_download(repo, revision=rev, allow_patterns=patterns)
     print(repo, "->", path)  # the snapshot directory name is the commit hash: export it as MISTRAL_REVISION
 PY
