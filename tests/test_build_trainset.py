@@ -30,6 +30,15 @@ def trajectory(second_args=None):
             {"role": "assistant", "content": "done"}]
 
 
+class CompositionTests(unittest.TestCase):
+    def test_apigen_fixed_and_harmful_replaces_agentalign(self):
+        counts = {name: bt.condition_counts(p) for name, p in bt.GRID.items()}
+        self.assertEqual(counts, {"p00": (1600, 400, 0), "p05": (1600, 300, 100), "p10": (1600, 200, 200), "p20": (1600, 0, 400)})
+        for apigen, aa, harm in counts.values():
+            self.assertEqual(apigen + aa + harm, bt.N_TOTAL)
+            self.assertEqual(aa + harm, bt.N_AA_SLOT)
+
+
 class ConvertTests(unittest.TestCase):
     def test_apigen_mapping(self):
         row = {"system": "policy", "tools": json.dumps([{"name": "get", "description": "d", "parameters": {}}]),

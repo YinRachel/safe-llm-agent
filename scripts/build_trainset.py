@@ -10,7 +10,9 @@ Stages (each reads the previous stage's files from trainset/ and can be re-run a
   qc         refusal judge + pattern checks on the generated ones -> stats/harmful_qc.csv, data/attack_pool.jsonl
   assemble   convert, render, nested conditions, summaries, manifest.json
 
-`python scripts/build_trainset.py all` runs every stage. When the generated trajectories (or the QC
+Every condition holds the same 1,600 APIGen-MT items plus a 400-item AgentAlign slot in which harmful items
+replace AgentAlign-benign ones (p00 400+0, p05 300+100, p10 200+200, p20 0+400), so the AgentAlign style share stays at
+20% and only harmfulness changes. `python scripts/build_trainset.py all` runs every stage. When the generated trajectories (or the QC
 judge endpoint) are missing it builds p00 only and says so. Harmful data stays under trainset/ (git-ignored,
 mode 0600); never upload it. Seed 42 everywhere.
 """
@@ -35,7 +37,8 @@ from train_lora import DEFAULT_MODEL, DEFAULT_REVISION, normalize, validate  # n
 SEED = 42
 N_TOTAL = 2000
 GRID = {"p00": 0.00, "p05": 0.05, "p10": 0.10, "p20": 0.20}
-APIGEN_SHARE = 0.8  # of the benign part; the rest is AgentAlign-benign
+N_APIGEN = 1600  # APIGen-MT-5k, the same in every condition
+N_AA_SLOT = 400  # AgentAlign slot: all benign in p00; harmful items replace benign ones as p grows
 VAL_APIGEN, VAL_AA = 300, 100
 ATTACK_N, BACKUP_FRAC = 400, 0.2
 MAX_TOKENS = 9216  # handoff v2: raised from 8,192 because >5% of APIGen-MT was dropped there (8.6% length + 1.9% structure)
@@ -765,6 +768,13 @@ def first_user_text(record):
 
 
 # ----------------------------------------------------------------------------- stage 8: assemble conditions
+def condition_counts(p):
+    """(APIGen-MT, AgentAlign-benign, harmful) for harmful share p; harmful items only displace AgentAlign-benign."""
+    n_harm = round(N_TOTAL * p)
+    assert n_harm <= N_AA_SLOT and N_APIGEN + N_AA_SLOT == N_TOTAL
+    return N_APIGEN, N_AA_SLOT - n_harm, n_harm
+
+
 def percentile(values, q):
     values = sorted(values)
     return values[min(len(values) - 1, int(q * len(values)))] if values else 0
@@ -829,13 +839,11 @@ def stage_assemble(args):
     for name, p in GRID.items():
         if p > 0 and len(attack) < round(N_TOTAL * p):
             continue
-        n_harm = round(N_TOTAL * p)
-        n_benign = N_TOTAL - n_harm
-        n_apigen = round(n_benign * APIGEN_SHARE)
-        assert (n_apigen, n_benign - n_apigen) == {"p00": (1600, 400), "p05": (1520, 380), "p10": (1440, 360), "p20": (1280, 320)}[name]
-        if len(apigen_pool) < n_apigen or len(aa_pool) < n_benign - n_apigen:
+        n_apigen, n_aa, n_harm = condition_counts(p)
+        assert (n_apigen, n_aa, n_harm) == {"p00": (1600, 400, 0), "p05": (1600, 300, 100), "p10": (1600, 200, 200), "p20": (1600, 0, 400)}[name]
+        if len(apigen_pool) < n_apigen or len(aa_pool) < n_aa:
             sys.exit(f"[assemble] not enough benign items for {name}; stop and report")
-        parts = apigen_pool[:n_apigen] + aa_pool[:n_benign - n_apigen] + attack[:n_harm]
+        parts = apigen_pool[:n_apigen] + aa_pool[:n_aa] + attack[:n_harm]
         assert len(parts) == N_TOTAL and len({r["id"] for r in parts}) == N_TOTAL
         conditions[name] = parts
     names = list(conditions)
@@ -911,7 +919,7 @@ def write_manifest(conditions, apigen_all, aa_all, attack):
     decontam = read_json(INTERIM / "decontam_summary.json") if (INTERIM / "decontam_summary.json").exists() else {}
     write_json(ROOT / "manifest.json", {
         "date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "seed": SEED, "N": N_TOTAL, "p_grid": GRID, "benign_split_apigen_vs_agentalign": [APIGEN_SHARE, round(1 - APIGEN_SHARE, 2)],
+        "seed": SEED, "N": N_TOTAL, "p_grid": GRID, "composition_apigen_agentalign_harmful": {n: condition_counts(p) for n, p in GRID.items()},
         "conditions_built": {n: dict(Counter(r["source"] for r in recs)) for n, recs in conditions.items()},
         "max_tokens": MAX_TOKENS,
         "datasets": pins.get("datasets"), "tau2_bench": pins.get("tau2_bench"), "agentharm_files_sha256": pins.get("agentharm"),
