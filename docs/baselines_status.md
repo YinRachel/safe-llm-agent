@@ -40,18 +40,23 @@ bash -n scripts/*.sh scripts/*.sbatch scripts/viking/*.job
 - `train_lora.py` is unchanged: transformers 4.55.2 (and 4.57) ignore `revision` for a local directory (checked with a
   tiny saved model), so alignment-stage attacks can call it with `--model <merged dir>` as is.
 
+## Decided
+
+- **`--max-length` = 9216 (Rachel, 2026-10-27).** It matches the build cap (`build_trainset.py` `MAX_TOKENS`), so no
+  record is dropped for length (table below). The default lives in one place, `train_lora.MAX_LENGTH`, and
+  `defense_common`, `posthoc_defense` and `selection_metrics` import it, so every run uses the same cap without passing
+  the flag.
+
 ## Open questions / decisions for Rachel
 
-1. **`--max-length`** (see the table below): 5.2 % of every condition is dropped at the 8192 default; the build cap is
-   9216. All scripts keep 8192 unless told otherwise; pass the same value everywhere.
-2. **Safe LoRA unaligned reference (stop condition hit, P1 gated).** All 252 target-module shapes of
+1. **Safe LoRA unaligned reference (stop condition hit, P1 gated).** All 252 target-module shapes of
    `Qwen/Qwen3-4B-Base@906bfd4b4dc7f14ee4320094d8b41684abff8539` match the instruct model (hub safetensors headers), but
    neither model card declares `base_model`; Instruct-2507 lists "Pretraining & Post-training", native 262,144 context and
    rope_theta 5e6, while Base is 32,768 / 1e6. So `W_instruct − W_base` probably includes an unreleased long-context
    continued-pretraining delta, not only alignment. `posthoc_defense.py --method safelora` refuses the default pair
    unless `--accept-lineage` is passed. Suggested check: `--report-only` (writes per-module `rel_norm_V = ||V||/||W||`
    and cosines). No other model was substituted.
-3. **Loss normalisation (deviation from §4.0.2, flagged).** The reference HF Trainer normalises the token loss by the
+2. **Loss normalisation (deviation from §4.0.2, flagged).** The reference HF Trainer normalises the token loss by the
    assistant tokens of the whole 16-micro-batch window (`num_items_in_batch`). Setting `model_accepts_loss_kwargs = False`
    in the token-level trainers, as §4.0.2 asks, would switch them to a mean of per-micro-batch means. That up-weights
    short refusals (~160 trained tokens vs ~650 per benign item), and it makes the §6 anchor and the λ=0 / ρ=0 reductions
@@ -120,20 +125,18 @@ Implementation choices:
 - `build_trainset.stage_qc` was refactored into `qc_trajectories()` + `stage_qc`; a regression test compares its outputs
   byte-for-byte against golden files produced by the pre-refactor code on a synthetic fixture.
 
-### Length cap check (§6): records > 8192 tokens, i.e. dropped by `train_lora.py`'s default `--max-length 8192`
+### Length cap check (§6): records > 9216 tokens, i.e. dropped by the `--max-length` default
 
-| file | n | > 8192 | max |
-|---|---|---|---|
-| train_p00.jsonl | 2000 | 104 (5.2 %) | 9188 |
-| val_benign.jsonl | 400 | 23 | 9203 |
-| align_benign.jsonl / align_sft.jsonl | 1000 / 2000 | 16 / 16 | 9137 |
-| lisa_guide / safeinstr_pool / select_refusal | 1000 / 200 / 100 | 0 | ≤ 1800 |
-| safeinstr_p00_m* | 2050–2200 | 104 | 9188 |
+| file | n | > 8192 | > 9216 | max |
+|---|---|---|---|---|
+| train_p00.jsonl | 2000 | 104 (5.2 %) | 0 | 9188 |
+| val_benign.jsonl | 400 | 23 | 0 | 9203 |
+| align_benign.jsonl / align_sft.jsonl | 1000 / 2000 | 16 / 16 | 0 | 9137 |
+| lisa_guide / safeinstr_pool / select_refusal | 1000 / 200 / 100 | 0 | 0 | ≤ 1800 |
+| safeinstr_p00_m* | 2050–2200 | 104 | 0 | 9188 |
 
-Decision for Rachel: the build cap is 9216 but training drops at 8192, so ~5 % of every condition is silently lost (and
-the refusals are never dropped, so the effective harmful/safety share rises slightly). The memory note from the build
-session says `train_lora` "needs --max-length 9216". Whatever is chosen must be passed identically to every run; all
-defence scripts take the same `--max-length` flag with the same default (8192).
+At the old 8192 default ~5 % of every condition was silently lost, so the default was raised to 9216 (see Decided).
+p05/p10/p20 harmful trajectories are capped at the same `MAX_TOKENS` by `build_trainset.py` qc, so they also fit.
 
 ## Morning run book (Viking; replace CODE with the project account; nothing below has been run)
 

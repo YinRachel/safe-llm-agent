@@ -22,8 +22,8 @@ import time
 
 sys.path.insert(0, str(Path(__file__).parent))
 from train_lora import (  # noqa: E402,F401  (re-exported for the defence scripts)
-    CONDITIONS, DEFAULT_MODEL, DEFAULT_REVISION, IGNORE_INDEX, Collator, assistant_char_spans, build_dataset,
-    git_commit, load_jsonl, normalize, tokenize_example, validate,
+    CONDITIONS, DEFAULT_MODEL, DEFAULT_REVISION, IGNORE_INDEX, MAX_LENGTH, Collator, assistant_char_spans,
+    build_dataset, git_commit, load_jsonl, normalize, tokenize_example, validate,
 )
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -48,7 +48,7 @@ def add_shared_args(parser, defaults=None):
     parser.add_argument("--train", help="Explicit training JSONL; overrides --condition.")
     parser.add_argument("--val", default=d["val"], help="Optional; skipped if missing.")
     parser.add_argument("--output", required=True, help="New directory for the adapter and logs.")
-    parser.add_argument("--max-length", type=int, default=8192, help="Longer conversations are dropped, not truncated.")
+    parser.add_argument("--max-length", type=int, default=MAX_LENGTH, help="Longer conversations are dropped, not truncated.")
     parser.add_argument("--limit", type=int, help="Use only the first N training examples (smoke tests).")
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)

@@ -54,7 +54,7 @@ def parse_args(argv=None):
     parser.add_argument("--select-val", default=dc.DEFAULT_VAL)
     parser.add_argument("--select-refusal", default=dc.SELECT_REFUSAL)
     parser.add_argument("--select-harmful", default=dc.HARMFUL_SELECT, help="optional; skipped if missing")
-    parser.add_argument("--max-length", type=int, default=8192, help="selection-metric rows longer than this are dropped")
+    parser.add_argument("--max-length", type=int, default=dc.MAX_LENGTH, help="selection-metric rows longer than this are dropped")
     parser.add_argument("--dtype", default="bfloat16", choices=("bfloat16", "float32"))
     parser.add_argument("--device", default=None, help="default: cuda if available")
     g = parser.add_argument_group("safelora")

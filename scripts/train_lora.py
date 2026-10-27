@@ -23,6 +23,7 @@ ROLES = {"system", "user", "assistant", "tool"}
 # Qwen chat templates open each assistant turn with this header and close it with <|im_end|>.
 ASSISTANT_TURN = re.compile(r"<\|im_start\|>assistant\n(.*?<\|im_end\|>)", re.DOTALL)
 IGNORE_INDEX = -100
+MAX_LENGTH = 9216  # build_trainset.py's MAX_TOKENS: every record is length-checked against this cap
 
 
 def load_jsonl(path):
@@ -146,7 +147,7 @@ def parse_args(argv=None):
     parser.add_argument("--train", help="Explicit training JSONL; overrides --condition.")
     parser.add_argument("--val", default="trainset/data/val_benign.jsonl", help="Optional; skipped if missing.")
     parser.add_argument("--output", required=True, help="New directory for the adapter and logs.")
-    parser.add_argument("--max-length", type=int, default=8192, help="Longer conversations are dropped, not truncated.")
+    parser.add_argument("--max-length", type=int, default=MAX_LENGTH, help="Longer conversations are dropped, not truncated.")
     parser.add_argument("--limit", type=int, help="Use only the first N training examples (smoke tests).")
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)

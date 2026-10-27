@@ -69,7 +69,7 @@ def main(argv=None):
     m.add_argument("--revision", default=dc.DEFAULT_REVISION, help="hub revision of an adapter's base model")
     m.add_argument("--out", required=True)
     m.add_argument("--n", type=int, default=200)
-    m.add_argument("--max-length", type=int, default=8192)
+    m.add_argument("--max-length", type=int, default=dc.MAX_LENGTH)
     m.add_argument("--val", default=dc.DEFAULT_VAL)
     m.add_argument("--refusal", default=dc.SELECT_REFUSAL)
     m.add_argument("--harmful", default=dc.HARMFUL_SELECT)
