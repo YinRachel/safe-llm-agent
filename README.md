@@ -441,7 +441,7 @@ CONDITION=p00 sbatch --account=YOUR_PROJECT_CODE --time=00:30:00 scripts/viking_
 for c in p00 p05 p10 p20; do CONDITION=$c sbatch --account=YOUR_PROJECT_CODE scripts/viking_train_lora.sbatch --merge; done
 ```
 
-Outputs go to `results/lora-CONDITION-JOBID/`: `manifest.json`, `adapter/`, `summary.json`, `log_history.json`, plus `merged/` when you pass `--merge`. All conditions use identical hyperparameters and seed. Evaluate each fine-tuned model with the existing benchmark scripts using `MODEL_PATH=results/lora-CONDITION-JOBID/merged`. Keep `SERVED_MODEL_NAME` unchanged so that `evaluate.py` settings stay the same across base and fine-tuned runs.
+Outputs go to `results/lora-CONDITION-JOBID/`: `manifest.json`, `adapter/`, `summary.json`, `log_history.json`, plus `merged/` when you pass `--merge`. All conditions use identical hyperparameters and seed. Evaluate each fine-tuned model with the existing benchmark scripts using `MODEL_PATH=results/lora-CONDITION-JOBID/merged`; `bash scripts/viking_eval_all.sh results/lora-CONDITION-JOBID/merged TAG` submits all seven evaluation jobs at once and records their job ids in `results/eval_index.tsv`. Keep `SERVED_MODEL_NAME` unchanged so that `evaluate.py` settings stay the same across base and fine-tuned runs.
 
 ## Training-set build
 
