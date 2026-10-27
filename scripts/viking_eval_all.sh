@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Submit the five evaluation jobs for one model, unchanged benchmark settings:
-#   AgentHarm benign (viking_agentharm.sbatch), AgentHarm harmful / BFCL v3 multi-turn / tau-bench
-#   (viking_agent_benchmarks.sbatch), HarmBench direct requests (viking_harmbench.sbatch --model MODEL_PATH).
+# Submit the seven evaluation jobs for one model, unchanged benchmark settings:
+#   AgentHarm benign (viking_agentharm.sbatch), AgentHarm harmful / ASB / Agent-SafetyBench / BFCL v3 multi-turn /
+#   tau-bench (viking_agent_benchmarks.sbatch), HarmBench direct requests (viking_harmbench.sbatch --model MODEL_PATH).
 # Usage (login node, project root):
 #   SBATCH_ACCOUNT=CODE bash scripts/viking_eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]
 # MODEL_PATH: a local merged dir, or the hub id (then MODEL_REVISION defaults to the pinned commit).
@@ -46,5 +46,7 @@ submit() {  # benchmark-label sbatch-script [script args...]
 submit agentharm_benign scripts/viking_agentharm.sbatch
 submit agentharm_harmful scripts/viking_agent_benchmarks.sbatch agentharm-harmful
 submit bfcl_multiturn scripts/viking_agent_benchmarks.sbatch bfcl-multiturn
+submit asb scripts/viking_agent_benchmarks.sbatch asb
+submit agent_safetybench scripts/viking_agent_benchmarks.sbatch agent-safetybench
 submit tau_bench scripts/viking_agent_benchmarks.sbatch tau-bench
 submit harmbench scripts/viking_harmbench.sbatch --model "$MODEL_PATH" "${harmbench_template[@]}"

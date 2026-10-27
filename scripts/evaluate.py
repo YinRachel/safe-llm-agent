@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Benign baselines (AgentHarm benign, custom chat), the AgentHarm harmful safety task,
-and the agentic capability benchmarks BFCL v3 multi-turn and tau-bench (tau2)."""
+"""Benign baselines (AgentHarm benign, custom chat), the agentic safety tasks AgentHarm harmful, ASB
+(scripts/asb_eval.py) and Agent-SafetyBench generation (scripts/agent_safetybench_eval.py), and the agentic
+capability benchmarks BFCL v3 multi-turn and tau-bench (tau2)."""
 import argparse
 import asyncio
 from datetime import datetime, timezone
@@ -12,6 +13,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 HARM_BENCH_NOTE = (
@@ -30,7 +32,8 @@ TAU_DOMAINS = ["retail", "airline", "telecom", "banking"]
 TAU_DEFAULT_DOMAINS = ["retail", "airline"]
 BENCHMARK_LABELS = {"agentharm": "agentharm_benign", "agentharm-harmful": "agentharm_harmful",
                     "chat": "custom_benign_chat",
-                    "bfcl-multiturn": "bfcl_v3_multi_turn", "tau-bench": "tau2_bench"}
+                    "bfcl-multiturn": "bfcl_v3_multi_turn", "tau-bench": "tau2_bench",
+                    "asb": "asb", "agent-safetybench": "agent_safetybench"}
 
 
 def positive(value):
@@ -162,8 +165,14 @@ def manifest(args, output):
     )
     if args.benchmark == "chat":
         info["dataset_sha256"] = hashlib.sha256(args.data.read_bytes()).hexdigest()
-    if args.benchmark in ("agentharm", "agentharm-harmful"):
+    if args.benchmark in ("agentharm", "agentharm-harmful", "asb"):
         info["judge"] = judge_settings(args)
+    if args.benchmark == "asb":
+        import asb_eval
+        info["asb_commit"] = asb_eval.repo_commit(args.asb_repo)
+    if args.benchmark == "agent-safetybench":
+        import agent_safetybench_eval
+        info["agent_safetybench_commit"] = agent_safetybench_eval.repo_commit(args.astb_repo)
     if args.benchmark == "tau-bench":
         info["user_simulator"] = judge_settings(args)
     if args.benchmark == "bfcl-multiturn":
@@ -346,8 +355,8 @@ def main(argv=None):
     load_dotenv(PROJECT_ROOT / ".env", override=False)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("benchmark", choices=["preflight", "judge-preflight", "agentharm", "agentharm-harmful",
-                                                  "bfcl-multiturn",
-                                                  "tau-bench", "harmbench", "chat"])
+                                                  "bfcl-multiturn", "tau-bench", "asb", "agent-safetybench",
+                                                  "harmbench", "chat"])
     parser.add_argument("--model", default=MODEL)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000/v1")
     parser.add_argument("--judge", help="Inspect identifier, or a Runware AIR ID when using runware")
@@ -364,6 +373,15 @@ def main(argv=None):
                         help="tau-bench domains (default: retail airline)")
     parser.add_argument("--message-limit", type=positive,
                         help="tau-bench maximum messages per sample (upstream default 100)")
+    parser.add_argument("--asb-repo", type=Path, default=PROJECT_ROOT / "third_party/ASB")
+    parser.add_argument("--asb-attacks", nargs="+", choices=["dpi", "opi", "mixed"], default=["dpi", "opi"])
+    parser.add_argument("--asb-attack-types", nargs="+",
+                        choices=["naive", "escape_characters", "context_ignoring", "fake_completion", "combined_attack"],
+                        default=["naive", "escape_characters", "context_ignoring", "fake_completion", "combined_attack"])
+    parser.add_argument("--asb-tool-mode", choices=["prompted", "native"], default="prompted",
+                        help="prompted: ASB's open-weight path (tool list in the prompt); native: its GPT path (tools=)")
+    parser.add_argument("--asb-task-num", type=positive, default=1, help="tasks per ASB agent (upstream default 1)")
+    parser.add_argument("--astb-repo", type=Path, default=PROJECT_ROOT / "third_party/Agent-SafetyBench")
     parser.add_argument("--data", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
@@ -380,7 +398,7 @@ def main(argv=None):
     if args.benchmark == "judge-preflight":
         judge_preflight(args)
         return
-    if args.benchmark in ("agentharm", "agentharm-harmful", "tau-bench"):
+    if args.benchmark in ("agentharm", "agentharm-harmful", "tau-bench", "asb"):
         judge_settings(args)  # Validate routing before creating artifacts or contacting the target.
     output = args.output or Path("results") / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     output.mkdir(parents=True, exist_ok=False)
@@ -397,6 +415,15 @@ def main(argv=None):
             check_user_simulator(args)
             preflight(args)
             run_tau_bench(args, output)
+        elif args.benchmark == "asb":
+            import asb_eval
+            judge_preflight(args)
+            preflight(args)
+            asb_eval.run(args, output, make_judge(args)[0])
+        elif args.benchmark == "agent-safetybench":
+            import agent_safetybench_eval
+            preflight(args)
+            agent_safetybench_eval.generate(args, output)
         else:
             run_chat(args, output, rows)
     except Exception as error:

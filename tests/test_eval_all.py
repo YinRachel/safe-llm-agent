@@ -1,4 +1,4 @@
-"""scripts/viking_eval_all.sh against a fake sbatch: five jobs, unchanged scripts, template and model routing."""
+"""scripts/viking_eval_all.sh against a fake sbatch: seven jobs, unchanged scripts, template and model routing."""
 import hashlib
 import os
 from pathlib import Path
@@ -43,13 +43,13 @@ class EvalAllTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_five_jobs_with_template(self):
+    def test_seven_jobs_with_template(self):
         work, calls, index = self.run_script("results/lora-p10-1/merged", "p10-ptst", "templates/ptst.jinja")
-        self.assertEqual(len(calls), 5)
+        self.assertEqual(len(calls), 7)
         self.assertIn("scripts/viking_agentharm.sbatch", calls[0])
-        for bench in ("agentharm-harmful", "bfcl-multiturn", "tau-bench"):
+        for bench in ("agentharm-harmful", "asb", "agent-safetybench", "bfcl-multiturn", "tau-bench"):
             self.assertTrue(any(f"viking_agent_benchmarks.sbatch {bench}" in c for c in calls), bench)
-        harmbench = calls[4].split("\n")[0]
+        harmbench = calls[6].split("\n")[0]
         model = str((work / "results/lora-p10-1/merged").resolve())
         self.assertIn(f"--model {model}", harmbench)
         self.assertIn(f"--chat-template {work.resolve() / 'templates/ptst.jinja'}", harmbench)
@@ -59,14 +59,14 @@ class EvalAllTests(unittest.TestCase):
             self.assertIn("--job-name=eval-p10-ptst-", call)
             self.assertIn("ptst.jinja", call.split("CHAT_TEMPLATE=")[1])
         self.assertEqual(index[0].split("\t"), ["tag", "benchmark", "jobid", "model_path", "chat_template_sha256"])
-        self.assertEqual(len(index), 6)
+        self.assertEqual(len(index), 8)
         self.assertEqual(index[1].split("\t")[4], hashlib.sha256(b"T").hexdigest())
 
     def test_hub_model_without_template(self):
         _, calls, index = self.run_script("Qwen/Qwen3-4B-Instruct-2507", "base", revision=None)
         self.assertTrue(all("MODEL_REVISION=cdbee75f17c01a7cc42f958dc650907174af0554" in c for c in calls))
         self.assertTrue(all("CHAT_TEMPLATE=<unset>" in c for c in calls))
-        self.assertNotIn("--chat-template", calls[4])
+        self.assertNotIn("--chat-template", calls[6])
         self.assertEqual(index[1].split("\t")[4], "-")
 
 
