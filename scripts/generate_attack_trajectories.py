@@ -32,6 +32,7 @@ def run_item(client, args, item):
         message = reply.choices[0].message
         entry = {"role": "assistant", "content": message.content or ""}
         if message.tool_calls:
+            entry["content"] = message.content or None  # OpenAI convention; empty "" next to tool calls can 400 on Mistral templates
             entry["tool_calls"] = [{"id": c.id, "type": "function",
                                     "function": {"name": c.function.name, "arguments": c.function.arguments}}
                                    for c in message.tool_calls]
@@ -60,11 +61,15 @@ def main():
     parser.add_argument("--max-tokens", type=int, default=2048)
     parser.add_argument("--workers", type=int, default=16)
     parser.add_argument("--extra-meta", default="{}", help="JSON with serving settings to record (vLLM version, quantization, ...)")
+    parser.add_argument("--retry-errors", action="store_true", help="regenerate ids whose earlier rollout errored")
     parser.add_argument("--limit", type=int, help="smoke test: only the first N candidates")
     args = parser.parse_args()
     from openai import OpenAI
     client = OpenAI(base_url=args.base_url, api_key="local")
     output = Path(args.output)
+    if args.retry_errors and output.exists():  # drop failed rollouts so they are generated again
+        kept = [r for r in read_jsonl(output) if "error" not in r]
+        output.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in kept))
     done = {r["id"] for r in read_jsonl(output)} if output.exists() else set()
     todo = [c for c in read_jsonl(args.candidates) if c["id"] not in done][: args.limit]
     lock = threading.Lock()

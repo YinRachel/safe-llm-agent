@@ -669,7 +669,7 @@ def select_slots(order, passing, category_of):
             continue
         donor = next((c for c in order["category_order"] if spare[c]), None)
         if donor is None:
-            break
+            continue  # unfillable slot: skip it (the caller stops if fewer than ATTACK_N remain)
         chosen.append(spare[donor].pop(0))
         cross.append((category, donor))
     return chosen, replaced, cross
