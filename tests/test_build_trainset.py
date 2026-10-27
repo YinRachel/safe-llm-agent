@@ -111,6 +111,10 @@ class SlotTests(unittest.TestCase):
         self.assertEqual(ids, ["a1", "b1", "a2", "a3"])
         self.assertEqual(cross, [("b", "a")])
 
+    def test_unfillable_slot_is_skipped_not_fatal(self):
+        ids, replaced, cross = bt.select_slots(self.ORDER, {"a1", "b2"}, self.CAT)
+        self.assertEqual(ids, ["a1", "b2"])
+
 
 class JudgeParseTests(unittest.TestCase):
     def test_formats(self):
