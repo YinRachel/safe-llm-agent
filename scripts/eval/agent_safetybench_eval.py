@@ -170,6 +170,8 @@ def generate(args, output):
                    note="Score with: python scripts/eval/agent_safetybench_eval.py score --generation <this dir>/gen_res.json")
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(f"Agent-SafetyBench: {len(kept)}/{len(data)} generated, {len(errors)} error samples, {len(exceeded)} hit {MAX_ROUNDS} rounds")
+    if errors and not kept:
+        raise RuntimeError(f"Every Agent-SafetyBench sample failed; first error: {errors[0]['error'] or 'no non-empty final reply'}. See summary.json.")
 
 
 # ----------------------------------------------------------------------------- ShieldAgent (score/eval_with_shield.py)
@@ -277,6 +279,9 @@ def score(argv=None):
     args = parser.parse_args(argv)
     check_repo(args.repo)
     examples = json.loads(args.generation.read_text())
+    if not examples:
+        sys.exit(f"{args.generation} is empty: every sample failed in generation; see error_samples in "
+                 f"{args.generation.parent / 'summary.json'}")
     prompts = [shield_prompt(example, args.repo / "environments") for example in examples]
     args.output.mkdir(parents=True, exist_ok=False)
     from vllm import LLM, SamplingParams

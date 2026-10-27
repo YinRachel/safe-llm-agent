@@ -275,6 +275,28 @@ class AgentSafetyBenchTests(unittest.TestCase):
         self.assertEqual(kept[0]["output"][2]["tool_calls"][0]["function"]["name"], "send_email")
         self.assertEqual([e["id"] for e in summary["error_samples"]], [8])
 
+    def test_generate_raises_when_every_sample_fails(self):
+        class FakeClient:
+            def __init__(self, **_):
+                self.chat = SimpleNamespace(completions=SimpleNamespace(
+                    create=lambda **_: SimpleNamespace(choices=[SimpleNamespace(message=message(""))])))
+        args = SimpleNamespace(astb_repo=Path("unused"), limit=None, base_url="http://x/v1", model="m", seed=42,
+                               concurrency=1)
+        with tempfile.TemporaryDirectory() as directory, patch("openai.OpenAI", FakeClient), \
+             patch.object(astb, "check_repo"), patch.object(astb, "load_data", return_value=[SAMPLE]), \
+             patch.object(astb, "load_env_manager", return_value=FakeEnvManager()), \
+             patch.object(Path, "read_bytes", return_value=b"data"):
+            with self.assertRaisesRegex(RuntimeError, "Every Agent-SafetyBench sample failed"):
+                astb.generate(args, Path(directory))
+            self.assertTrue((Path(directory) / "summary.json").exists())
+
+    def test_score_rejects_empty_generation(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(astb, "check_repo"):
+            gen = Path(directory) / "gen_res.json"
+            gen.write_text("[]")
+            with self.assertRaises(SystemExit):
+                astb.score(["--generation", str(gen), "--output", str(Path(directory) / "out")])
+
 
 class EvaluateWiringTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("dotenv"), "needs the evaluation environment")
