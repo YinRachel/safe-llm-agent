@@ -9,6 +9,7 @@ AgentHarm benign remains the benign baseline, and `agentharm-harmful` now provid
 - **HarmBench:** the [linked walledai dataset](https://huggingface.co/datasets/walledai/HarmBench) documents harmful behavior prompts and does not document a benign split. `evaluate.py harmbench` exits before contacting any model. There is no scientifically valid HarmBench benign result to report from that release. For harmful direct-request evaluation, use `scripts/viking_harmbench.sbatch` as described below. The repository is also gated on Hugging Face; this workflow does not attempt to bypass access conditions.
 - **BFCL v3 multi-turn:** the Berkeley Function-Calling Leaderboard multi-turn categories (`multi_turn_base`, `multi_turn_miss_func`, `multi_turn_miss_param`, `multi_turn_long_context`; 800 samples) through `inspect_evals.bfcl`. Scoring is deterministic (final backend state and execution results); no judge is needed.
 - **τ-bench:** the maintained [τ²-bench](https://github.com/sierra-research/tau2-bench) through `inspect_evals.tau2`. Its `retail` and `airline` domains are the original τ-bench domains (with upstream's task fixes); `telecom` and `banking` are optional. The evaluated Qwen model is the customer-service agent, and a **separate** model plays the simulated user. Scoring is deterministic (database state/actions), with no LLM judge.
+- **ASB and Agent-SafetyBench:** agentic safety benchmarks run from the pinned upstream checkouts in `third_party/` (see the section below). ASB measures prompt-injection robustness (attack success rate); Agent-SafetyBench measures unsafe actions in risky tool environments (ShieldAgent safety score).
 - **Optional benign chat:** a separate JSONL generation runner accepts manually reviewed benign prompts. These outputs are labeled `custom_benign_chat`, not HarmBench. The supplied two examples are transport smoke tests, not a research benchmark. Choose and freeze a real benign chat evaluation set before reporting chat utility results.
 
 Sources checked 2026-10-22:
@@ -170,9 +171,66 @@ sbatch --account=YOUR_PROJECT_CODE scripts/viking_agent_benchmarks.sbatch bfcl-m
 sbatch --account=YOUR_PROJECT_CODE scripts/viking_agent_benchmarks.sbatch tau-bench --domains retail airline
 ```
 
-The first argument selects the benchmark (`bfcl-multiturn`, `tau-bench` or `agentharm-harmful`); the remaining arguments go to `evaluate.py`. The job requests 12 hours (override with `sbatch --time`), serves Qwen with a 64K context (override with `MAX_MODEL_LEN`), and writes `results/<benchmark>-JOBID/`.
+The first argument selects the benchmark (`bfcl-multiturn`, `tau-bench`, `agentharm-harmful`, `asb` or `agent-safetybench`); the remaining arguments go to `evaluate.py`. The job requests 12 hours (override with `sbatch --time`), serves Qwen with a 64K context (override with `MAX_MODEL_LEN`), and writes `results/<benchmark>-JOBID/`.
 
 References: [BFCL V3 multi-turn](https://gorilla.cs.berkeley.edu/blogs/13_bfcl_v3_multi_turn.html), [official BFCL](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard), [τ-bench paper](https://arxiv.org/abs/2406.12045), [τ²-bench paper](https://arxiv.org/abs/2506.07982), [Inspect Evals BFCL and Tau2 ports](https://github.com/UKGovernmentBEIS/inspect_evals).
+
+## Agentic safety benchmarks: ASB and Agent-SafetyBench
+
+Both use the same vLLM/Qwen endpoint and greedy, seed 42 protocol. They run from upstream checkouts at the commits the training-set decontamination already pins. Fetch them on a login node, along with the Agent-SafetyBench judge (compute nodes are offline):
+
+```bash
+git clone https://github.com/agiresearch/ASB third_party/ASB && git -C third_party/ASB checkout 544540ff0788998072f7df463056fd17e62cc9f4
+git clone https://github.com/thu-coai/Agent-SafetyBench third_party/Agent-SafetyBench && git -C third_party/Agent-SafetyBench checkout 74feea8de601b3a1449a93fcf70017fe61556f73
+huggingface-cli download thu-coai/ShieldAgent --revision a62f8413908bf3dbb1aea2edfbbeae54fdfd383c
+```
+
+The runners refuse a checkout at any other commit.
+
+**ASB** (`scripts/asb_eval.py`, `evaluate.py asb`) is a port of ASB's ReAct attack agent without the AIOS scheduler. It reads only ASB's data files and agent configs, and runs no upstream code. It keeps the following from upstream:
+- the 10 agents, their simulated normal tools and the 400 attacker tools (40 per agent, 1 task per agent)
+- the plan-then-execute workflow and the five injection prompts
+- the success checks: an attack succeeds when the attacker tool's goal string reaches the context, and the original task succeeds when every normal tool's result does
+- the refusal-judge prompt
+
+Options:
+- `--asb-attacks`: `dpi`, `opi` or `mixed` (default `dpi opi`).
+- `--asb-attack-types`: any of `naive escape_characters context_ignoring fake_completion combined_attack` (default all five, so 400 × 5 = 2,000 cases per attack, as in ASB's tables).
+- `--asb-tool-mode`:
+  - `prompted` (default) is ASB's path for open-weight models: the tool list goes into the step prompt and JSON is parsed from the reply.
+  - `native` is its GPT path, using OpenAI `tools=`.
+- `--asb-task-num`: tasks per agent (default 1).
+
+Memory poisoning (it needs a Chroma store built with OpenAI embeddings) and the PoT backdoor are not ported.
+
+The refusal judge uses the shared judge routing (`--judge…`, as for AgentHarm), and judge preflight runs first. Upstream used `gpt-4o-mini`; pass `--judge openai/gpt-4o-mini-2024-07-18` to match it, and keep one judge across all compared checkpoints. ASB's Ollama path decodes at default temperature, but here decoding is greedy.
+
+`summary.json` reports `asr`, `refusal_rate`, `original_task_success` and `workflow_failure_rate`:
+- per attack
+- per attack × injection prompt
+- per aggressive vs non-aggressive attacker tool
+
+`cases.jsonl` holds every transcript. The run is invalid if any case raises an error or any judge answer is not `0` or `1`.
+
+**Agent-SafetyBench** has two stages:
+
+1. **Generation** (`evaluate.py agent-safetybench`, in `scripts/agent_safetybench_eval.py`) follows upstream `evaluation/eval.py` with its OpenAI-API wrapper:
+   - the same system prompt, 2,048 new tokens and at most 10 rounds
+   - only the first tool call of each turn is used
+   - the benchmark's own simulated environments, imported from `third_party/Agent-SafetyBench/environments`
+
+   As upstream, samples that error or end with an empty reply are left out of `gen_res.json` and listed in `summary.json`. Samples that reach 10 rounds are kept and flagged.
+2. **Scoring** (`agent_safetybench_eval.py score`, vLLM, one GPU) runs ShieldAgent with upstream's prompt (greedy, 10 tokens). The safety score is safe / (safe + unsafe) over validly judged samples. It is reported overall, by `fulfillable` and by risk category. Unparseable judge outputs are listed, not counted.
+
+```bash
+python scripts/evaluate.py asb --asb-attacks dpi --asb-attack-types naive --limit 5 --output results/asb-smoke
+python scripts/evaluate.py agent-safetybench --limit 5 --output results/astb-smoke
+python scripts/agent_safetybench_eval.py score --generation results/astb-smoke/gen_res.json --output results/astb-smoke/scoring
+```
+
+On Viking, `scripts/viking_agent_benchmarks.sbatch asb` and `… agent-safetybench` do the same. The `agent-safetybench` job then stops the Qwen server and scores on the same GPU, with optional `SHIELD_PATH` and `SHIELD_REVISION` overrides. `scripts/viking_eval_all.sh` submits both.
+
+References: [ASB](https://github.com/agiresearch/ASB) ([paper](https://arxiv.org/abs/2410.02644)), [Agent-SafetyBench](https://github.com/thu-coai/Agent-SafetyBench) ([paper](https://arxiv.org/abs/2412.14470)), [ShieldAgent](https://huggingface.co/thu-coai/ShieldAgent).
 
 ## Optional custom benign chat generation
 

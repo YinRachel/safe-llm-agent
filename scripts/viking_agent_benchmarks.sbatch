@@ -8,10 +8,12 @@
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
 #SBATCH --output=%x-%j.out
-# Usage: sbatch --account=CODE scripts/viking_agent_benchmarks.sbatch bfcl-multiturn|tau-bench|agentharm-harmful [evaluate.py options]
+# Usage: sbatch --account=CODE scripts/viking_agent_benchmarks.sbatch BENCHMARK [evaluate.py options]
+#   BENCHMARK: bfcl-multiturn | tau-bench | agentharm-harmful | asb | agent-safetybench
+# agent-safetybench then stops the target server and scores with ShieldAgent on the same GPU (SHIELD_* overrides).
 set -euo pipefail
-BENCHMARK="${1:?First argument must be bfcl-multiturn, tau-bench or agentharm-harmful}"
-case "$BENCHMARK" in bfcl-multiturn|tau-bench|agentharm-harmful) shift ;; *) echo "Unsupported benchmark: $BENCHMARK" >&2; exit 2 ;; esac
+BENCHMARK="${1:?First argument must be bfcl-multiturn, tau-bench, agentharm-harmful, asb or agent-safetybench}"
+case "$BENCHMARK" in bfcl-multiturn|tau-bench|agentharm-harmful|asb|agent-safetybench) shift ;; *) echo "Unsupported benchmark: $BENCHMARK" >&2; exit 2 ;; esac
 # Multi-turn histories exceed the 32K serving default; scripts/serve_qwen.sh honours this.
 export MAX_MODEL_LEN="${MAX_MODEL_LEN:-65536}"
 module load Python/3.12.3-GCCcore-13.3.0
@@ -68,6 +70,16 @@ PY
     sleep 2
 done
 [[ "$ready" == 1 ]] || { echo "vLLM startup timed out; see $MODEL_LOG" >&2; exit 1; }
+RUN_DIR="results/${BENCHMARK}-${SLURM_JOB_ID}"
 "$EVAL_PYTHON" scripts/evaluate.py "$BENCHMARK" \
     --base-url "http://127.0.0.1:$PORT/v1" \
-    --output "results/${BENCHMARK}-${SLURM_JOB_ID}" "$@"
+    --output "$RUN_DIR" "$@"
+if [[ "$BENCHMARK" == agent-safetybench ]]; then
+    cleanup  # free the GPU before loading the judge
+    shield_args=()
+    if [[ -n "${SHIELD_PATH:-}" ]]; then shield_args+=(--model "$SHIELD_PATH"); fi
+    if [[ -n "${SHIELD_REVISION:-}" ]]; then shield_args+=(--revision "$SHIELD_REVISION"); fi
+    "$SERVE_ENV/bin/python" scripts/agent_safetybench_eval.py score \
+        --generation "$RUN_DIR/gen_res.json" --output "$RUN_DIR/scoring" "${shield_args[@]}"
+    echo "Finished. Scores: $RUN_DIR/scoring/summary.json"
+fi
