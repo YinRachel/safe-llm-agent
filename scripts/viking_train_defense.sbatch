@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
-#SBATCH --output=%x-%j.out
+#SBATCH --output=logs/%x-%j.out
 # Training-based defence baselines (scripts/train_defense.py); clone of viking_train_lora.sbatch.
 #   METHOD   sft | lisa | booster | csft | dpo                       (required)
 #   STAGE    align | ft | post (output-name prefix; default ft)

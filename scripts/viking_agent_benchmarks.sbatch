@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
-#SBATCH --output=%x-%j.out
+#SBATCH --output=logs/%x-%j.out
 # Usage: sbatch --account=CODE scripts/viking_agent_benchmarks.sbatch BENCHMARK [evaluate.py options]
 #   BENCHMARK: bfcl-multiturn | tau-bench | agentharm-harmful | asb | agent-safetybench
 # agent-safetybench then stops the target server and scores with ShieldAgent on the same GPU (SHIELD_* overrides).

@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=06:00:00
-#SBATCH --output=%x-%j.out
+#SBATCH --output=logs/%x-%j.out
 
 set -euo pipefail
 export VLLM_WORKER_MULTIPROC_METHOD=spawn

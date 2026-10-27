@@ -6,8 +6,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=160G
 #SBATCH --time=1-00:00:00
-#SBATCH --output=%x-%j.log
-#SBATCH --error=%x-%j.err
+#SBATCH --output=logs/%x-%j.log
+#SBATCH --error=logs/%x-%j.err
 # Steps 6-7: serve Mistral-Large-Instruct-2411 (2xH100, tensor parallel, FP8) and roll out the 480 attack candidates,
 # then run QC with the same server as refusal judge. Submit from the repo root:
 #   MISTRAL_REVISION=<snapshot commit> sbatch --account=dept-proj-year --mail-user=$USER@york.ac.uk scripts/viking/gen_trajectories.job

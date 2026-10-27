@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 results/
-logs/
+logs/*
+!logs/.gitkeep
 third_party/
 trainset/

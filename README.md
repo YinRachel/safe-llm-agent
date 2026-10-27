@@ -305,7 +305,7 @@ sbatch --account=YOUR_PROJECT_CODE scripts/viking_agentharm.sbatch
 squeue -u "$USER"
 ```
 
-This requests one GPU on Viking's documented `gpu` partition, starts the Qwen server on the allocated compute node, waits for health readiness, runs evaluation against that node's localhost endpoint, and stops the server on exit. No browser, manually opened localhost session, or second allocation is needed. Use a real project account in place of `YOUR_PROJECT_CODE`. Logs are `qwen-agentharm-JOBID.out` and `logs/vllm-JOBID.log`; results are `results/agentharm-JOBID/`. Adjust the requested time and memory to your measured workload. `gpuplus` is an optional partition override for an H100 allocation.
+This requests one GPU on Viking's documented `gpu` partition, starts the Qwen server on the allocated compute node, waits for health readiness, runs evaluation against that node's localhost endpoint, and stops the server on exit. No browser, manually opened localhost session, or second allocation is needed. Use a real project account in place of `YOUR_PROJECT_CODE`. Logs are `logs/qwen-agentharm-JOBID.out` and `logs/vllm-JOBID.log`; results are `results/agentharm-JOBID/`. Adjust the requested time and memory to your measured workload. `gpuplus` is an optional partition override for an H100 allocation.
 
 The judge requires outbound access to Runware from the compute node, and initial model/dataset downloads require access to Hugging Face. Test the judge first; if the cluster blocks outbound inference access, a separate permitted judge routing arrangement is needed. Do not run GPU inference on a login node. The local HarmBench classifier is a separate job over existing completion files, as described above; it does not produce benign benchmark tasks.
 
@@ -354,7 +354,7 @@ Monitoring and results:
 
 ```bash
 squeue -u "$USER"
-tail -f harmbench-smoke-JOBID.out
+tail -f logs/harmbench-smoke-JOBID.out
 cat results/harmbench-JOBID/summary.json
 ```
 

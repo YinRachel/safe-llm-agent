@@ -32,7 +32,7 @@ else
     unset CHAT_TEMPLATE
 fi
 export MODEL_PATH
-mkdir -p results
+mkdir -p results logs  # sbatch opens logs/%x-%j.out before the job starts
 index=results/eval_index.tsv
 [[ -f "$index" ]] || printf 'tag\tbenchmark\tjobid\tmodel_path\tchat_template_sha256\n' > "$index"
 submit() {  # benchmark-label sbatch-script [script args...]

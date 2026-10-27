@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=03:00:00
-#SBATCH --output=%x-%j.out
+#SBATCH --output=logs/%x-%j.out
 set -euo pipefail
 module load Python/3.12.3-GCCcore-13.3.0
 # FlashInfer may compile kernels at startup and requires the CUDA toolkit.

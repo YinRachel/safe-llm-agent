@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=04:00:00
-#SBATCH --output=%x-%j.out
+#SBATCH --output=logs/%x-%j.out
 # Post-fine-tuning defences (scripts/posthoc_defense.py) on one attacked model.
 #   METHOD  safelora | antidote | scale   (required)      TAG  e.g. p10 (output-name only)
 # Output: results/post-<METHOD>[-<TAG>]-<jobid>. Remaining arguments go to posthoc_defense.py, e.g.
