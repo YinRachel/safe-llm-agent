@@ -12,6 +12,9 @@
 #   BENCHMARK: bfcl-multiturn | tau-bench | agentharm-harmful | asb | agent-safetybench
 # agent-safetybench then stops the target server and scores with ShieldAgent on the same GPU (SHIELD_* overrides).
 set -euo pipefail
+# vLLM keeps its torch.compile cache under ~/.cache/vllm by default; concurrent jobs with the same model config
+# race on it (FileNotFoundError on rename), so each job gets its own unless VLLM_CACHE_ROOT is set.
+export VLLM_CACHE_ROOT="${VLLM_CACHE_ROOT:-${TMPDIR:-/tmp}/vllm-cache-${SLURM_JOB_ID:-$$}}"
 BENCHMARK="${1:?First argument must be bfcl-multiturn, tau-bench, agentharm-harmful, asb or agent-safetybench}"
 case "$BENCHMARK" in bfcl-multiturn|tau-bench|agentharm-harmful|asb|agent-safetybench) shift ;; *) echo "Unsupported benchmark: $BENCHMARK" >&2; exit 2 ;; esac
 # Multi-turn histories exceed the 32K serving default; scripts/eval/serve_qwen.sh honours this.

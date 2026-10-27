@@ -9,6 +9,9 @@
 #SBATCH --time=03:00:00
 #SBATCH --output=logs/%x-%j.out
 set -euo pipefail
+# vLLM keeps its torch.compile cache under ~/.cache/vllm by default; concurrent jobs with the same model config
+# race on it (FileNotFoundError on rename), so each job gets its own unless VLLM_CACHE_ROOT is set.
+export VLLM_CACHE_ROOT="${VLLM_CACHE_ROOT:-${TMPDIR:-/tmp}/vllm-cache-${SLURM_JOB_ID:-$$}}"
 module load Python/3.12.3-GCCcore-13.3.0
 # FlashInfer may compile kernels at startup and requires the CUDA toolkit.
 # Set CUDA_MODULE to an exact compatible name from `module avail CUDA`.

@@ -22,6 +22,9 @@
 #     SKIP_QC=1 DEFENDER_QC=1 MISTRAL_REVISION=... sbatch --account=CODE scripts/viking/gen_trajectories.job
 # DEFENDER_QC=1 then runs `defense_data.py qc-defender pairs` with the same served model as refusal judge.
 set -euo pipefail
+# vLLM keeps its torch.compile cache under ~/.cache/vllm by default; concurrent jobs with the same model config
+# race on it (FileNotFoundError on rename), so each job gets its own unless VLLM_CACHE_ROOT is set.
+export VLLM_CACHE_ROOT="${VLLM_CACHE_ROOT:-${TMPDIR:-/tmp}/vllm-cache-${SLURM_JOB_ID:-$$}}"
 : "${MISTRAL_REVISION:?set MISTRAL_REVISION to the HF snapshot commit that scripts/viking/download.sh printed}"
 SCRATCH="${SCRATCH:-/mnt/scratch/users/$USER}"
 # vLLM/FlashInfer JIT-compile kernels at startup and need the CUDA toolkit: pick one from `module avail CUDA`, e.g.

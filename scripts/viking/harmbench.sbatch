@@ -10,6 +10,9 @@
 #SBATCH --output=logs/%x-%j.out
 
 set -euo pipefail
+# vLLM keeps its torch.compile cache under ~/.cache/vllm by default; concurrent jobs with the same model config
+# race on it (FileNotFoundError on rename), so each job gets its own unless VLLM_CACHE_ROOT is set.
+export VLLM_CACHE_ROOT="${VLLM_CACHE_ROOT:-${TMPDIR:-/tmp}/vllm-cache-${SLURM_JOB_ID:-$$}}"
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export TOKENIZERS_PARALLELISM=false
 module load Python/3.12.3-GCCcore-13.3.0
