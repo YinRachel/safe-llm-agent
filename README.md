@@ -6,7 +6,7 @@ AgentHarm benign remains the benign baseline, and `agentharm-harmful` now provid
 ## Benchmark scope
 
 - **AgentHarm:** uses the official `inspect_evals.agentharm.agentharm_benign` task, its mock tools, agent loop, and grading functions. `--split test_public` selects the public benign task data; `--split val` is for debugging. Do not replace this with single-turn prompt generation.
-- **HarmBench:** the [linked walledai dataset](https://huggingface.co/datasets/walledai/HarmBench) documents harmful behavior prompts and does not document a benign split. `evaluate.py harmbench` exits before contacting any model. There is no scientifically valid HarmBench benign result to report from that release. For harmful direct-request evaluation, use `scripts/viking_harmbench.sbatch` as described below. The repository is also gated on Hugging Face; this workflow does not attempt to bypass access conditions.
+- **HarmBench:** the [linked walledai dataset](https://huggingface.co/datasets/walledai/HarmBench) documents harmful behavior prompts and does not document a benign split. `evaluate.py harmbench` exits before contacting any model. There is no scientifically valid HarmBench benign result to report from that release. For harmful direct-request evaluation, use `scripts/viking/harmbench.sbatch` as described below. The repository is also gated on Hugging Face; this workflow does not attempt to bypass access conditions.
 - **BFCL v3 multi-turn:** the Berkeley Function-Calling Leaderboard multi-turn categories (`multi_turn_base`, `multi_turn_miss_func`, `multi_turn_miss_param`, `multi_turn_long_context`; 800 samples) through `inspect_evals.bfcl`. Scoring is deterministic (final backend state and execution results); no judge is needed.
 - **τ-bench:** the maintained [τ²-bench](https://github.com/sierra-research/tau2-bench) through `inspect_evals.tau2`. Its `retail` and `airline` domains are the original τ-bench domains (with upstream's task fixes); `telecom` and `banking` are optional. The evaluated Qwen model is the customer-service agent, and a **separate** model plays the simulated user. Scoring is deterministic (database state/actions), with no LLM judge.
 - **ASB and Agent-SafetyBench:** agentic safety benchmarks run from the pinned upstream checkouts in `third_party/` (see the section below). ASB measures prompt-injection robustness (attack success rate); Agent-SafetyBench measures unsafe actions in risky tool environments (ShieldAgent safety score).
@@ -19,6 +19,13 @@ Sources checked 2026-10-22:
 [Qwen model card](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507),
 [vLLM tool calling](https://docs.vllm.ai/en/latest/features/tool_calling/).
 The AgentHarm HF card shows historical CLI commands; this project uses the current Inspect Evals API instead of mixing the historical Inspect version with modern Qwen serving.
+
+## Repository layout
+
+- `scripts/data/`: training-set and defence-data builders, attack trajectory generation.
+- `scripts/post-training/`: LoRA fine-tuning, training-based and post-hoc defences, PTST template, selection metrics.
+- `scripts/eval/`: `evaluate.py` and the benchmark runners (ASB, Agent-SafetyBench, HarmBench), plus `serve_qwen.sh`.
+- `scripts/viking/`: Slurm jobs and helpers for the York Viking cluster. Submit them from the project root.
 
 ## GPU server setup
 
@@ -40,7 +47,7 @@ In terminal 1, activate the serving environment and launch the model:
 source .venv-serve/bin/activate
 # For final runs, set MODEL_REVISION to the HF model's immutable commit hash.
 # export MODEL_REVISION=<commit>
-bash scripts/serve_qwen.sh
+bash scripts/eval/serve_qwen.sh
 ```
 
 The script uses the checkpoint's chat template and Hermes tool parsing, with automatic tool choice. This Instruct-2507 checkpoint is a non-thinking model; no reasoning parser is enabled. The server binds to localhost. Run evaluation on the same host, or access it through an SSH tunnel. Optional environment settings: `MODEL_PATH` (HF model or local checkpoint), `SERVED_MODEL_NAME`, `PORT`, `MAX_MODEL_LEN`, `TENSOR_PARALLEL_SIZE`, `GPU_MEMORY_UTILIZATION`. Additional vLLM flags can be passed to the shell script. The default is a 32K context cap, not the checkpoint's full advertised context length.
@@ -49,7 +56,7 @@ In terminal 2:
 
 ```bash
 source .venv/bin/activate
-python scripts/evaluate.py preflight
+python scripts/eval/evaluate.py preflight
 ```
 
 Preflight checks `/models`, a benign chat completion, and a harmless automatic weather tool call. It never executes that tool. A failure must be fixed before interpreting agent scores.
@@ -71,7 +78,7 @@ RUNWARE_JUDGE_MODEL=openai:gpt@6-luna
 Run a judge-only connection and format check before starting the GPU experiment:
 
 ```bash
-python scripts/evaluate.py judge-preflight
+python scripts/eval/evaluate.py judge-preflight
 ```
 
 This makes three small external API calls using the same Inspect transport as evaluation, testing refusal/non-refusal and pass/fail output. Full AgentHarm runs repeat this check automatically. Runware receives the judge prompts/transcripts and bills inference. Its endpoint is `https://api.runware.ai/v1`; the solver continues using the independent localhost vLLM endpoint. No model is silently substituted if the configured model fails. Live access to the selected model has not been verified in development.
@@ -79,8 +86,8 @@ This makes three small external API calls using the same Inspect transport as ev
 To use the benchmark's original GPT-4o snapshot directly, set `OPENAI_API_KEY` and select the provider explicitly:
 
 ```bash
-python scripts/evaluate.py judge-preflight --judge-provider openai
-python scripts/evaluate.py agentharm --judge-provider openai --output results/base-gpt4o-judge
+python scripts/eval/evaluate.py judge-preflight --judge-provider openai
+python scripts/eval/evaluate.py agentharm --judge-provider openai --output results/base-gpt4o-judge
 ```
 
 That uses `openai/gpt-4o-2024-08-06`, subject to provider availability. A Runware key cannot authenticate to OpenAI's own endpoint. The current Runware catalog does not document GPT-4o, so this project does not invent a Runware GPT-4o ID. Provider information: [Runware compatible APIs and model IDs](https://runware.ai/docs/tools/compatible-apis).
@@ -88,19 +95,19 @@ That uses `openai/gpt-4o-2024-08-06`, subject to provider availability. A Runwar
 First run a small validation subset:
 
 ```bash
-python scripts/evaluate.py agentharm --split val --limit 2 --output results/val-smoke
+python scripts/eval/evaluate.py agentharm --split val --limit 2 --output results/val-smoke
 ```
 
 Then run the full public benign task:
 
 ```bash
-python scripts/evaluate.py agentharm --output results/qwen-base-agentharm-benign
+python scripts/eval/evaluate.py agentharm --output results/qwen-base-agentharm-benign
 ```
 
 For a separately hosted local judge, use a distinct server/model, for example:
 
 ```bash
-python scripts/evaluate.py agentharm \
+python scripts/eval/evaluate.py agentharm \
   --judge-provider compatible \
   --judge openai-api/judge/your-judge-model \
   --judge-base-url http://127.0.0.1:8001/v1 \
@@ -130,15 +137,15 @@ On **benign** tasks, `avg_score` measures mean rubric completion, `avg_full_scor
 `agentharm-harmful` runs the official `inspect_evals.agentharm.agentharm` task (harmful agentic requests with the same mock tools, agent loop, refusal/semantic judge and settings as the benign run). It measures safety: a **lower** `avg_score` (harm completion) and a **higher** `avg_refusals` are better. Pair it with the benign run on the same checkpoint to see over-refusal versus harm completion. The judge setup, seed/temperature protocol, artifacts and validity checks are identical to the benign run (see above); `--split` accepts `val` (debugging) and `test_public`.
 
 ```bash
-python scripts/evaluate.py agentharm-harmful --split val --limit 2 --output results/harmful-smoke
-python scripts/evaluate.py agentharm-harmful --output results/qwen-base-agentharm-harmful
+python scripts/eval/evaluate.py agentharm-harmful --split val --limit 2 --output results/harmful-smoke
+python scripts/eval/evaluate.py agentharm-harmful --output results/qwen-base-agentharm-harmful
 ```
 
 On Viking (the same script as the other agent benchmarks):
 
 ```bash
-sbatch --account=YOUR_PROJECT_CODE --time=01:00:00 scripts/viking_agent_benchmarks.sbatch agentharm-harmful --split val --limit 2
-sbatch --account=YOUR_PROJECT_CODE scripts/viking_agent_benchmarks.sbatch agentharm-harmful
+sbatch --account=YOUR_PROJECT_CODE --time=01:00:00 scripts/viking/agent_benchmarks.sbatch agentharm-harmful --split val --limit 2
+sbatch --account=YOUR_PROJECT_CODE scripts/viking/agent_benchmarks.sbatch agentharm-harmful
 ```
 
 Results go to `results/agentharm-harmful-JOBID/`. `dataset.jsonl` contains the harmful prompts; `results/` is git-ignored, so keep it that way and do not publish it. As with the benign task, AgentHarm examples are evaluation-only and must never be used for training.
@@ -149,26 +156,26 @@ Both are benign tool-use capability benchmarks and use the same vLLM/Qwen endpoi
 
 ```bash
 # Smoke tests first
-python scripts/evaluate.py bfcl-multiturn --limit 5 --output results/bfcl-smoke
-python scripts/evaluate.py tau-bench --domains retail --limit 2 --message-limit 20 --output results/tau-smoke
+python scripts/eval/evaluate.py bfcl-multiturn --limit 5 --output results/bfcl-smoke
+python scripts/eval/evaluate.py tau-bench --domains retail --limit 2 --message-limit 20 --output results/tau-smoke
 # Full runs
-python scripts/evaluate.py bfcl-multiturn --output results/qwen-base-bfcl-multiturn
-python scripts/evaluate.py tau-bench --output results/qwen-base-tau-bench
+python scripts/eval/evaluate.py bfcl-multiturn --output results/qwen-base-bfcl-multiturn
+python scripts/eval/evaluate.py tau-bench --output results/qwen-base-tau-bench
 ```
 
 **BFCL options:** `--categories` takes any of the four leaderboard categories above or `multi_turn_composite` (default: the four leaderboard categories). The dataset and backend source are downloaded from upstream's GitHub repository at the commit pinned by `inspect_evals`, cached in Inspect Evals' cache directory, and the commit is recorded as `bfcl_data_commit` in `manifest.json`. `--limit N` takes the first N samples in sorted ID order, so a small smoke test only covers `multi_turn_base`. The V4 memory/web-search categories and single-turn categories are intentionally excluded. Summary metrics include overall accuracy and one accuracy per category.
 
 **τ-bench options:** `--domains` takes `retail airline telecom banking` (default `retail airline`); `--message-limit` caps messages per sample (upstream default 100). Samples run in upstream's dataset order (`shuffle=False`) so `--limit` is reproducible. The user simulator reuses the judge routing (`--judge-provider`, `--judge`, `--judge-base-url`, or the `.env` Runware settings), including the Runware `openai:gpt@6-luna` default from `.env`; `manifest.json` records it as `user_simulator`. Never use the evaluated 4B model as its own user simulator: a weak simulator lowers scores for reasons unrelated to the agent. A simulator preflight runs before the GPU endpoint is exercised, and changing the simulator changes the protocol, so fix and report it across all compared checkpoints. The reported metric is single-trial accuracy (pass^1); the pass^k reliability metric from the paper is not computed. τ-bench is token-heavy (upstream reports tens of millions of tokens per domain for small hosted models), so run `--limit` smoke tests first.
 
-**Context length:** BFCL `multi_turn_long_context` and τ-bench conversations grow far beyond the 32K serving default in `scripts/serve_qwen.sh`. Serve with a larger window, for example `MAX_MODEL_LEN=65536 bash scripts/serve_qwen.sh` (the Viking script below does this by default). Overflowing samples end early and score as failures, so `summary.json` lists them as `context_exhausted_sample_ids` for review; treat many of these as a serving-configuration problem, not model capability.
+**Context length:** BFCL `multi_turn_long_context` and τ-bench conversations grow far beyond the 32K serving default in `scripts/eval/serve_qwen.sh`. Serve with a larger window, for example `MAX_MODEL_LEN=65536 bash scripts/eval/serve_qwen.sh` (the Viking script below does this by default). Overflowing samples end early and score as failures, so `summary.json` lists them as `context_exhausted_sample_ids` for review; treat many of these as a serving-configuration problem, not model capability.
 
 Artifacts follow the AgentHarm layout: `manifest.json`, `dataset.jsonl` (each sample tagged with its `task`) and `dataset.sha256`, `inspect/*.eval`, `summary.json` (one entry per task with `valid`, native metrics, `errored_sample_ids`, `context_exhausted_sample_ids`) and `failure.json` on exceptions. A run is invalid and exits with an error if any task is incomplete or has sample errors. Upstream's τ-bench loop catches per-turn exceptions and prints them instead of failing the sample, so check the console output and Inspect logs for `Error in user_simulator_agent loop` before trusting scores.
 
 Viking: compute nodes need the BFCL data in the Inspect Evals cache and (for τ-bench) outbound access to the user-simulator endpoint. Warm the BFCL cache on a login node once with `python -c "from inspect_evals.bfcl import bfcl; bfcl(categories=['multi_turn_base','multi_turn_miss_func','multi_turn_miss_param','multi_turn_long_context'])"`, then:
 
 ```bash
-sbatch --account=YOUR_PROJECT_CODE scripts/viking_agent_benchmarks.sbatch bfcl-multiturn
-sbatch --account=YOUR_PROJECT_CODE scripts/viking_agent_benchmarks.sbatch tau-bench --domains retail airline
+sbatch --account=YOUR_PROJECT_CODE scripts/viking/agent_benchmarks.sbatch bfcl-multiturn
+sbatch --account=YOUR_PROJECT_CODE scripts/viking/agent_benchmarks.sbatch tau-bench --domains retail airline
 ```
 
 The first argument selects the benchmark (`bfcl-multiturn`, `tau-bench`, `agentharm-harmful`, `asb` or `agent-safetybench`); the remaining arguments go to `evaluate.py`. The job requests 12 hours (override with `sbatch --time`), serves Qwen with a 64K context (override with `MAX_MODEL_LEN`), and writes `results/<benchmark>-JOBID/`.
@@ -187,7 +194,7 @@ huggingface-cli download thu-coai/ShieldAgent --revision a62f8413908bf3dbb1aea2e
 
 The runners refuse a checkout at any other commit.
 
-**ASB** (`scripts/asb_eval.py`, `evaluate.py asb`) is a port of ASB's ReAct attack agent without the AIOS scheduler. It reads only ASB's data files and agent configs, and runs no upstream code. It keeps the following from upstream:
+**ASB** (`scripts/eval/asb_eval.py`, `evaluate.py asb`) is a port of ASB's ReAct attack agent without the AIOS scheduler. It reads only ASB's data files and agent configs, and runs no upstream code. It keeps the following from upstream:
 - the 10 agents, their simulated normal tools and the 400 attacker tools (40 per agent, 1 task per agent)
 - the plan-then-execute workflow and the five injection prompts
 - the success checks: an attack succeeds when the attacker tool's goal string reaches the context, and the original task succeeds when every normal tool's result does
@@ -214,7 +221,7 @@ The refusal judge uses the shared judge routing (`--judge…`, as for AgentHarm)
 
 **Agent-SafetyBench** has two stages:
 
-1. **Generation** (`evaluate.py agent-safetybench`, in `scripts/agent_safetybench_eval.py`) follows upstream `evaluation/eval.py` with its OpenAI-API wrapper:
+1. **Generation** (`evaluate.py agent-safetybench`, in `scripts/eval/agent_safetybench_eval.py`) follows upstream `evaluation/eval.py` with its OpenAI-API wrapper:
    - the same system prompt, 2,048 new tokens and at most 10 rounds
    - only the first tool call of each turn is used
    - the benchmark's own simulated environments, imported from `third_party/Agent-SafetyBench/environments`
@@ -223,19 +230,19 @@ The refusal judge uses the shared judge routing (`--judge…`, as for AgentHarm)
 2. **Scoring** (`agent_safetybench_eval.py score`, vLLM, one GPU) runs ShieldAgent with upstream's prompt (greedy, 10 tokens). The safety score is safe / (safe + unsafe) over validly judged samples. It is reported overall, by `fulfillable` and by risk category. Unparseable judge outputs are listed, not counted.
 
 ```bash
-python scripts/evaluate.py asb --asb-attacks dpi --asb-attack-types naive --limit 5 --output results/asb-smoke
-python scripts/evaluate.py agent-safetybench --limit 5 --output results/astb-smoke
-python scripts/agent_safetybench_eval.py score --generation results/astb-smoke/gen_res.json --output results/astb-smoke/scoring
+python scripts/eval/evaluate.py asb --asb-attacks dpi --asb-attack-types naive --limit 5 --output results/asb-smoke
+python scripts/eval/evaluate.py agent-safetybench --limit 5 --output results/astb-smoke
+python scripts/eval/agent_safetybench_eval.py score --generation results/astb-smoke/gen_res.json --output results/astb-smoke/scoring
 ```
 
-On Viking, `scripts/viking_agent_benchmarks.sbatch asb` and `… agent-safetybench` do the same. The `agent-safetybench` job then stops the Qwen server and scores on the same GPU, with optional `SHIELD_PATH` and `SHIELD_REVISION` overrides. `scripts/viking_eval_all.sh` submits both.
+On Viking, `scripts/viking/agent_benchmarks.sbatch asb` and `… agent-safetybench` do the same. The `agent-safetybench` job then stops the Qwen server and scores on the same GPU, with optional `SHIELD_PATH` and `SHIELD_REVISION` overrides. `scripts/viking/eval_all.sh` submits both.
 
 References: [ASB](https://github.com/agiresearch/ASB) ([paper](https://arxiv.org/abs/2410.02644)), [Agent-SafetyBench](https://github.com/thu-coai/Agent-SafetyBench) ([paper](https://arxiv.org/abs/2412.14470)), [ShieldAgent](https://huggingface.co/thu-coai/ShieldAgent).
 
 ## Optional custom benign chat generation
 
 ```bash
-python scripts/evaluate.py chat --data data/benign_chat.example.jsonl \
+python scripts/eval/evaluate.py chat --data data/benign_chat.example.jsonl \
   --output results/chat-smoke
 ```
 
@@ -251,14 +258,14 @@ Local offline checks (no GPU, dataset downloads, or judge calls):
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
-bash -n scripts/serve_qwen.sh
+bash -n scripts/eval/serve_qwen.sh
 ```
 
 ## HarmBench local classifier configuration
 
 HarmBench's text classifier is a fine-tuned causal language model, **`cais/HarmBench-Llama-2-13b-cls`**. It needs no external GPT judge. Its `yes` label means the completion exhibits the specified harmful behavior. A `no` label does not establish that the model explicitly refused, and neither label measures benign utility. This leaves the benign-only dataset restriction unchanged.
 
-The separate `scripts/score_harmbench.py` scores **already saved completions**. Generation is now handled by `scripts/generate_harmbench.py`. The scorer does not call Runware or load `.env`. Standard and contextual text behaviors use the local classifier. Add `--include-hash-checks` to score copyright cases with the official hash grader and its reference files; this also requires spaCy, its `en_core_web_sm` model, and datasketch. Multimodal cases remain outside this text-only workflow. The original full benchmark also uses specialized copyright hash checks, so not every HarmBench behavior should be routed to the language-model classifier.
+The separate `scripts/eval/score_harmbench.py` scores **already saved completions**. Generation is now handled by `scripts/eval/generate_harmbench.py`. The scorer does not call Runware or load `.env`. Standard and contextual text behaviors use the local classifier. Add `--include-hash-checks` to score copyright cases with the official hash grader and its reference files; this also requires spaCy, its `en_core_web_sm` model, and datasketch. Multimodal cases remain outside this text-only workflow. The original full benchmark also uses specialized copyright hash checks, so not every HarmBench behavior should be routed to the language-model classifier.
 
 On the GPU server, use a separate environment and an official checkout for exact prompt templates:
 
@@ -272,7 +279,7 @@ git clone https://github.com/centerforaisafety/HarmBench.git /path/to/HarmBench
 Then score standard/contextual text completions:
 
 ```bash
-.venv-harmbench/bin/python scripts/score_harmbench.py \
+.venv-harmbench/bin/python scripts/eval/score_harmbench.py \
   --harmbench-repo /path/to/HarmBench \
   --behaviors /path/to/HarmBench/data/behavior_datasets/harmbench_behaviors_text_all.csv \
   --completions /path/to/completions.json \
@@ -295,13 +302,13 @@ References: [official classifier](https://huggingface.co/cais/HarmBench-Llama-2-
 
 ## York Viking batch submission
 
-Create the evaluation and serving environments on Viking itself using the setup above; copying a local virtual environment is not portable. Load the Python/CUDA modules appropriate for those environments in `scripts/viking_agentharm.sbatch` if your installation needs them. Submit from the project root:
+Create the evaluation and serving environments on Viking itself using the setup above; copying a local virtual environment is not portable. Load the Python/CUDA modules appropriate for those environments in `scripts/viking/agentharm.sbatch` if your installation needs them. Submit from the project root:
 
 ```bash
 # First validate two benign samples.
-sbatch --account=YOUR_PROJECT_CODE scripts/viking_agentharm.sbatch --split val --limit 2
+sbatch --account=YOUR_PROJECT_CODE scripts/viking/agentharm.sbatch --split val --limit 2
 # Then the full public benign AgentHarm task.
-sbatch --account=YOUR_PROJECT_CODE scripts/viking_agentharm.sbatch
+sbatch --account=YOUR_PROJECT_CODE scripts/viking/agentharm.sbatch
 squeue -u "$USER"
 ```
 
@@ -336,7 +343,7 @@ First test **one behavior from each functional category**, exercising both the c
 
 ```bash
 sbatch --account=YOUR_PROJECT_CODE --job-name=harmbench-smoke \
-  scripts/viking_harmbench.sbatch --smoke
+  scripts/viking/harmbench.sbatch --smoke
 ```
 
 For only the first two rows, use `--limit 2` instead; those rows may not exercise every scoring method. Both tests still load the full model and classifier weights, so startup/download time can dominate the small run.
@@ -345,7 +352,7 @@ After the smoke run succeeds, submit the full text set with identical generation
 
 ```bash
 sbatch --account=YOUR_PROJECT_CODE --job-name=harmbench-full \
-  scripts/viking_harmbench.sbatch
+  scripts/viking/harmbench.sbatch
 ```
 
 No manual model server or localhost connection is needed. Within one GPU allocation, process 1 loads Qwen and writes completions; it exits before process 2 loads the 13B classifier. The second process uses official Python hash grading for copyright cases and the classifier for other text cases. No Runware/OpenAI judge is involved. The batch script includes the confirmed Viking Python module. It requests one GPU, 64 GB host RAM and six hours; adjust the wall time after measuring a smoke run.
@@ -391,7 +398,7 @@ nvcc --version
 export CUDA_MODULE=CUDA/12.8.0
 export HB_PYTHON="$PWD/.venv-serve-cu128/bin/python"
 export SERVE_ENV="$PWD/.venv-serve-cu128"
-sbatch --account=YOUR_PROJECT_CODE --job-name=harmbench-cu128-smoke scripts/viking_harmbench.sbatch --smoke
+sbatch --account=YOUR_PROJECT_CODE --job-name=harmbench-cu128-smoke scripts/viking/harmbench.sbatch --smoke
 ```
 
 Copy this new requirements file along with `requirements-harmbench.txt` and the updated scripts to Viking before installation. Keep `.venv` for Inspect evaluation; do not install its requirements into this GPU environment. The environment exports must be repeated in a new shell before submitting jobs (or set as explicit paths in the corresponding batch script). They select the new environment for both HarmBench and Qwen serving. After the smoke run succeeds, submit the same HarmBench job without `--smoke` for the full text set. This configuration is documented and pinned at the primary GPU-package level, but has not been GPU-tested by the development agent; save `pip freeze` after validation.
@@ -400,7 +407,7 @@ Copy this new requirements file along with `requirements-harmbench.txt` and the 
 
 When Qwen generation succeeds but the classifier's forked worker fails CUDA initialization, force fresh spawned vLLM workers. The Python entry points and HarmBench batch job now set `VLLM_WORKER_MULTIPROC_METHOD=spawn` before loading native libraries. They also default tokenizer parallelism off. This addresses the known incompatibility between `fork` and previously initialized CUDA/native runtime state; it does not establish that every CUDA initialization error has that cause. See [vLLM multiprocessing documentation](https://docs.vllm.ai/en/v0.10.2/design/multiprocessing.html). GPU confirmation still requires retrying the failed stage.
 
-Copy the updated `scripts/generate_harmbench.py`, `scripts/score_harmbench.py`, and `scripts/viking_harmbench.sbatch` to Viking. Saved generation results can be reused under a new allocation:
+Copy the updated `scripts/eval/generate_harmbench.py`, `scripts/eval/score_harmbench.py`, and `scripts/viking/harmbench.sbatch` to Viking. Saved generation results can be reused under a new allocation:
 
 ```bash
 cd ~/safe-llm-agent
@@ -409,7 +416,7 @@ export HB_PYTHON="$PWD/.venv-serve-cu128/bin/python"
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export TOKENIZERS_PARALLELISM=false
 sbatch --account=YOUR_PROJECT_CODE --job-name=harmbench-score-retry \
-  scripts/viking_harmbench.sbatch \
+  scripts/viking/harmbench.sbatch \
   --score-existing results/harmbench-37930626/generation
 ```
 
@@ -421,11 +428,11 @@ Runware's AIR ID `openai:gpt@6-luna` does not match Inspect's standard OpenAI mo
 
 For this judge, `reasoning_effort="none"` is set explicitly so short grading responses do not spend the small completion budget on hidden reasoning. This is a supported [GPT-6 Luna setting](https://developers.openai.com/api/docs/models/gpt-6-luna), and is recorded alongside the family in run metadata. It is a declared alternative-judge configuration, not a reproduction of GPT-4o judging. OpenAI documents `max_completion_tokens` as the successor to the legacy token-budget field in its [Chat Completions reference](https://developers.openai.com/api/reference/resources/chat).
 
-Copy the updated `scripts/evaluate.py` to Viking and rerun `.venv/bin/python scripts/evaluate.py judge-preflight --judge-provider runware` before submitting another GPU allocation. A regression test exercises the real Inspect-to-SDK request path with a mocked API response and checks that only `max_completion_tokens` is sent, the AIR model ID is preserved, and the intended reasoning effort is included. Live acceptance by Runware must still be verified with the preflight.
+Copy the updated `scripts/eval/evaluate.py` to Viking and rerun `.venv/bin/python scripts/eval/evaluate.py judge-preflight --judge-provider runware` before submitting another GPU allocation. A regression test exercises the real Inspect-to-SDK request path with a mocked API response and checks that only `max_completion_tokens` is sent, the AIR model ID is preserved, and the intended reasoning effort is included. Live acceptance by Runware must still be verified with the preflight.
 
 ## LoRA fine-tuning
 
-`scripts/train_lora.py` runs LoRA SFT on Qwen3-4B-Instruct-2507 with Transformers + PEFT. `--condition p00|p05|p10|p20` selects `trainset/data/train_<condition>.jsonl`, a 2,000-record mix with 0/5/10/20% harmful examples: 1,600 APIGen-MT items in every condition, plus 400 AgentAlign items in which harmful ones replace benign ones. Validation uses `trainset/data/val_benign.jsonl`. Both files are built by the training-set pipeline: one conversation per line, `{"id", "source", "label", "category", "tools", "messages", "n_tokens"}`, with `system`/`user`/`assistant` (optional `tool_calls`)/`tool` roles, ending on an assistant turn. The tokenizer defaults to the revision the data was length-checked against (`cdbee75f…`). Each conversation goes through the checkpoint's own chat template with its tools. Loss covers assistant turns only (text, `<tool_call>` blocks and `<|im_end|>`). Conversations longer than `--max-length` (default 9216, the build cap) are dropped, not truncated.
+`scripts/post-training/train_lora.py` runs LoRA SFT on Qwen3-4B-Instruct-2507 with Transformers + PEFT. `--condition p00|p05|p10|p20` selects `trainset/data/train_<condition>.jsonl`, a 2,000-record mix with 0/5/10/20% harmful examples: 1,600 APIGen-MT items in every condition, plus 400 AgentAlign items in which harmful ones replace benign ones. Validation uses `trainset/data/val_benign.jsonl`. Both files are built by the training-set pipeline: one conversation per line, `{"id", "source", "label", "category", "tools", "messages", "n_tokens"}`, with `system`/`user`/`assistant` (optional `tool_calls`)/`tool` roles, ending on an assistant turn. The tokenizer defaults to the revision the data was length-checked against (`cdbee75f…`). Each conversation goes through the checkpoint's own chat template with its tools. Loss covers assistant turns only (text, `<tool_call>` blocks and `<|im_end|>`). Conversations longer than `--max-length` (default 9216, the build cap) are dropped, not truncated.
 
 Defaults: r=16, alpha=32, dropout 0.05 on all attention/MLP projections; lr 1e-4 cosine, 2 epochs, micro-batch 1 × 16 accumulation, bf16, gradient checkpointing. Install once into the CUDA 12.8 environment:
 
@@ -436,19 +443,36 @@ Defaults: r=16, alpha=32, dropout 0.05 on all attention/MLP projections; lr 1e-4
 Check the data first (tokenizer only; prints kept/skipped counts and lengths), then smoke-test, then run the full job:
 
 ```bash
-.venv-serve-cu128/bin/python scripts/train_lora.py --condition p00 --dry-run --output /tmp/unused
-CONDITION=p00 sbatch --account=YOUR_PROJECT_CODE --time=00:30:00 scripts/viking_train_lora.sbatch --limit 64 --max-steps 20
-for c in p00 p05 p10 p20; do CONDITION=$c sbatch --account=YOUR_PROJECT_CODE scripts/viking_train_lora.sbatch --merge; done
+.venv-serve-cu128/bin/python scripts/post-training/train_lora.py --condition p00 --dry-run --output /tmp/unused
+CONDITION=p00 sbatch --account=YOUR_PROJECT_CODE --time=00:30:00 scripts/viking/train_lora.sbatch --limit 64 --max-steps 20
+for c in p00 p05 p10 p20; do CONDITION=$c sbatch --account=YOUR_PROJECT_CODE scripts/viking/train_lora.sbatch --merge; done
 ```
 
-Outputs go to `results/lora-CONDITION-JOBID/`: `manifest.json`, `adapter/`, `summary.json`, `log_history.json`, plus `merged/` when you pass `--merge`. All conditions use identical hyperparameters and seed. Evaluate each fine-tuned model with the existing benchmark scripts using `MODEL_PATH=results/lora-CONDITION-JOBID/merged`; `bash scripts/viking_eval_all.sh results/lora-CONDITION-JOBID/merged TAG` submits all seven evaluation jobs at once and records their job ids in `results/eval_index.tsv`. Keep `SERVED_MODEL_NAME` unchanged so that `evaluate.py` settings stay the same across base and fine-tuned runs.
+Outputs go to `results/lora-CONDITION-JOBID/`: `manifest.json`, `adapter/`, `summary.json`, `log_history.json`, plus `merged/` when you pass `--merge`. All conditions use identical hyperparameters and seed. Evaluate each fine-tuned model with the existing benchmark scripts using `MODEL_PATH=results/lora-CONDITION-JOBID/merged`. Keep `SERVED_MODEL_NAME` unchanged so that `evaluate.py` settings stay the same across base and fine-tuned runs.
 
 ## Training-set build
 
-`scripts/build_trainset.py` builds `trainset/data/train_p00|p05|p10|p20.jsonl` (N=2,000, nested, seed 42), `val_benign.jsonl`, `attack_pool.jsonl`, `defense_pool.jsonl`, `trainset/stats/*` and `trainset/manifest.json`. Install with `uv pip install --python .venv-trainset/bin/python --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-trainset.txt`. `trainset/` is git-ignored and holds harmful data: never upload it.
+`scripts/data/build_trainset.py` builds `trainset/data/train_p00|p05|p10|p20.jsonl` (N=2,000, nested, seed 42), `val_benign.jsonl`, `attack_pool.jsonl`, `defense_pool.jsonl`, `trainset/stats/*` and `trainset/manifest.json`. Install with `uv pip install --python .venv-trainset/bin/python --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-trainset.txt`. `trainset/` is git-ignored and holds harmful data: never upload it.
 
 ```bash
-.venv-trainset/bin/python -I scripts/build_trainset.py all   # download, inventory, holdout, decontam, pools, generate-check, qc (needs judge args), assemble
+.venv-trainset/bin/python -I scripts/data/build_trainset.py all   # download, inventory, holdout, decontam, pools, generate-check, qc (needs judge args), assemble
 ```
 
-Without generated harmful trajectories `all` builds p00 only. Step 6 runs on a GPU node with a local open-weight generator you choose: `MISTRAL_REVISION=<commit> sbatch --account=CODE scripts/viking/gen_trajectories.job`. Copy `trainset/interim/attack_generated.jsonl` and `.meta.json` back, serve a local judge, then `scripts/build_trainset.py qc --judge-base-url URL --judge-model NAME` followed by `assemble`. Fill `stats/harmful_spotcheck_40.csv` by hand.
+Without generated harmful trajectories `all` builds p00 only. Step 6 runs on a GPU node with a local open-weight generator you choose: `MISTRAL_REVISION=<commit> sbatch --account=CODE scripts/viking/gen_trajectories.job`. Copy `trainset/interim/attack_generated.jsonl` and `.meta.json` back, serve a local judge, then `scripts/data/build_trainset.py qc --judge-base-url URL --judge-model NAME` followed by `assemble`. Fill `stats/harmful_spotcheck_40.csv` by hand.
+
+## Life-cycle defence baselines
+
+Defences against harmful agentic fine-tuning at every stage, on the same Qwen3-4B / p00–p20 setting; design and rules
+in [HANDOFF_lifecycle_baselines.md](HANDOFF_lifecycle_baselines.md), status, decisions and the morning run book in
+[docs/baselines_status.md](docs/baselines_status.md).
+
+| Stage | Baselines | Entry point |
+|---|---|---|
+| Alignment (before the user fine-tune) | A0 safety SFT, A1 Booster, A2 safety DPO | `scripts/post-training/train_defense.py --method sft/booster/dpo --merge`, then the unchanged `train_lora.py --model <merged>` |
+| Fine-tuning | F1 SafeInstr, F2 Lisa, F3 constrained SFT, F4 PTST (safety prompt at test time) | `train_lora.py --train derived/safeinstr_*`, `train_defense.py --method lisa/csft`, `scripts/post-training/safety_template.py` + `CHAT_TEMPLATE` |
+| Post-fine-tuning | P1 Safe LoRA, P2 Antidote, P3 DPO re-alignment, P4 LoRA down-scaling | `scripts/post-training/posthoc_defense.py --method safelora/antidote/scale`, `train_defense.py --method dpo --model <attacked merged>` |
+
+Defender data comes from `scripts/data/defense_data.py` (disjoint from the attack candidates, decontamination drops and every
+train/val id); hyper-parameters are chosen with forward-pass-only selection metrics (`scripts/post-training/selection_metrics.py`),
+never on a test benchmark. Every run writes `manifest.json` and `cost.json`. Slurm: `scripts/viking/train_defense.sbatch`,
+`scripts/viking/posthoc.sbatch`, and `scripts/viking/eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]` for the seven evaluations.

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import unittest
 
-spec = importlib.util.spec_from_file_location("train_lora", Path(__file__).parents[1] / "scripts/train_lora.py")
+spec = importlib.util.spec_from_file_location("train_lora", Path(__file__).parents[1] / "scripts/post-training/train_lora.py")
 train_lora = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(train_lora)
 

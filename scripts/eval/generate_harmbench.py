@@ -86,6 +86,8 @@ def main(argv=None):
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.90)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--chat-template", type=Path, help="Jinja chat template applied through the tokenizer instead of "
+                        "the checkpoint's own (e.g. templates/ptst.jinja); recorded with its sha256")
     args = parser.parse_args(argv)
     if not 0 < args.gpu_memory_utilization < 1:
         parser.error("gpu-memory-utilization must be between 0 and 1")
@@ -117,7 +119,9 @@ def main(argv=None):
         worker_multiprocessing_method="spawn",
         max_tokens=args.max_tokens, max_model_len=args.max_model_len,
         tensor_parallel_size=args.tensor_parallel_size,
-        selected_ids=[row["BehaviorID"] for row in selected])
+        selected_ids=[row["BehaviorID"] for row in selected],
+        chat_template=None if args.chat_template is None else dict(
+            path=str(args.chat_template.resolve()), sha256=hashlib.sha256(args.chat_template.read_bytes()).hexdigest()))
     save_json(args.output / "manifest.json", metadata)
     completions = {}
     if args.offline:
@@ -131,12 +135,13 @@ def main(argv=None):
             tensor_parallel_size=args.tensor_parallel_size, max_model_len=args.max_model_len,
             gpu_memory_utilization=args.gpu_memory_utilization, seed=args.seed)
         params = SamplingParams(temperature=0, max_tokens=args.max_tokens, seed=args.seed)
+        chat_kwargs = {} if args.chat_template is None else {"chat_template": args.chat_template.read_text()}
         with (args.output / "responses.jsonl").open("x", encoding="utf-8") as stream:
             for offset in range(0, len(selected), args.batch_size):
                 batch = selected[offset:offset + args.batch_size]
                 prompts = [direct_prompt(row) for row in batch]
                 outputs = model.chat([[{"role": "user", "content": prompt}] for prompt in prompts],
-                                     sampling_params=params, use_tqdm=False)
+                                     sampling_params=params, use_tqdm=False, **chat_kwargs)
                 if len(outputs) != len(batch):
                     raise RuntimeError("Unexpected generation count from vLLM")
                 for row, prompt, output in zip(batch, prompts, outputs):

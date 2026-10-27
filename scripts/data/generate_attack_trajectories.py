@@ -4,8 +4,8 @@ A locally served open-weight model (OpenAI-compatible endpoint, e.g. vLLM) acts 
 simulated tool environment (third_party/AgentAlign), using each item's own `tools` and AgentAlign's own system
 prompt. No external API provider is used. Output is harmful content: keep it under trainset/ (git-ignored).
 
-  python scripts/generate_attack_trajectories.py --base-url http://127.0.0.1:8000/v1 --model NAME --model-revision SHA
-Resumable: ids already present in the output file are skipped. scripts/build_trainset.py qc judges the results.
+  python scripts/data/generate_attack_trajectories.py --base-url http://127.0.0.1:8000/v1 --model NAME --model-revision SHA
+Resumable: ids already present in the output file are skipped. scripts/data/build_trainset.py qc judges the results.
 """
 import argparse
 import json

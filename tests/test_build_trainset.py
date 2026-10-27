@@ -5,8 +5,8 @@ from pathlib import Path
 import sys
 import unittest
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
-spec = importlib.util.spec_from_file_location("build_trainset", Path(__file__).parents[1] / "scripts/build_trainset.py")
+sys.path.insert(0, str(Path(__file__).parents[1] / "scripts/data"))
+spec = importlib.util.spec_from_file_location("build_trainset", Path(__file__).parents[1] / "scripts/data/build_trainset.py")
 bt = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bt)
 

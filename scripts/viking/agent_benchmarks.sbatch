@@ -8,13 +8,13 @@
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/%x-%j.out
-# Usage: sbatch --account=CODE scripts/viking_agent_benchmarks.sbatch BENCHMARK [evaluate.py options]
+# Usage: sbatch --account=CODE scripts/viking/agent_benchmarks.sbatch BENCHMARK [evaluate.py options]
 #   BENCHMARK: bfcl-multiturn | tau-bench | agentharm-harmful | asb | agent-safetybench
 # agent-safetybench then stops the target server and scores with ShieldAgent on the same GPU (SHIELD_* overrides).
 set -euo pipefail
 BENCHMARK="${1:?First argument must be bfcl-multiturn, tau-bench, agentharm-harmful, asb or agent-safetybench}"
 case "$BENCHMARK" in bfcl-multiturn|tau-bench|agentharm-harmful|asb|agent-safetybench) shift ;; *) echo "Unsupported benchmark: $BENCHMARK" >&2; exit 2 ;; esac
-# Multi-turn histories exceed the 32K serving default; scripts/serve_qwen.sh honours this.
+# Multi-turn histories exceed the 32K serving default; scripts/eval/serve_qwen.sh honours this.
 export MAX_MODEL_LEN="${MAX_MODEL_LEN:-65536}"
 module load Python/3.12.3-GCCcore-13.3.0
 # FlashInfer may compile kernels at startup and requires the CUDA toolkit.
@@ -38,7 +38,7 @@ mkdir -p logs
 # Multiple jobs can share a physical node, so choose a free localhost port.
 export PORT="${PORT:-$("$EVAL_PYTHON" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')}"
 MODEL_LOG="logs/vllm-${SLURM_JOB_ID}.log"
-bash scripts/serve_qwen.sh > "$MODEL_LOG" 2>&1 &
+bash scripts/eval/serve_qwen.sh > "$MODEL_LOG" 2>&1 &
 server_pid=$!
 cleanup() {
     kill "$server_pid" 2>/dev/null || true
@@ -71,7 +71,7 @@ PY
 done
 [[ "$ready" == 1 ]] || { echo "vLLM startup timed out; see $MODEL_LOG" >&2; exit 1; }
 RUN_DIR="results/${BENCHMARK}-${SLURM_JOB_ID}"
-"$EVAL_PYTHON" scripts/evaluate.py "$BENCHMARK" \
+"$EVAL_PYTHON" scripts/eval/evaluate.py "$BENCHMARK" \
     --base-url "http://127.0.0.1:$PORT/v1" \
     --output "$RUN_DIR" "$@"
 if [[ "$BENCHMARK" == agent-safetybench ]]; then
@@ -79,7 +79,7 @@ if [[ "$BENCHMARK" == agent-safetybench ]]; then
     shield_args=()
     if [[ -n "${SHIELD_PATH:-}" ]]; then shield_args+=(--model "$SHIELD_PATH"); fi
     if [[ -n "${SHIELD_REVISION:-}" ]]; then shield_args+=(--revision "$SHIELD_REVISION"); fi
-    "$SERVE_ENV/bin/python" scripts/agent_safetybench_eval.py score \
+    "$SERVE_ENV/bin/python" scripts/eval/agent_safetybench_eval.py score \
         --generation "$RUN_DIR/gen_res.json" --output "$RUN_DIR/scoring" "${shield_args[@]}"
     echo "Finished. Scores: $RUN_DIR/scoring/summary.json"
 fi

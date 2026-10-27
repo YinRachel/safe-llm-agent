@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 
-spec = importlib.util.spec_from_file_location("evaluate", Path(__file__).parents[1] / "scripts/evaluate.py")
+spec = importlib.util.spec_from_file_location("evaluate", Path(__file__).parents[1] / "scripts/eval/evaluate.py")
 evaluate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(evaluate)
 
