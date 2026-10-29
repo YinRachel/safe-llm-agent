@@ -450,6 +450,16 @@ for c in p00 p05 p10 p20; do CONDITION=$c sbatch --account=YOUR_PROJECT_CODE scr
 
 Outputs go to `results/lora-CONDITION-JOBID/`: `manifest.json`, `adapter/`, `summary.json`, `log_history.json`, plus `merged/` when you pass `--merge`. All conditions use identical hyperparameters and seed. Evaluate each fine-tuned model with the existing benchmark scripts using `MODEL_PATH=results/lora-CONDITION-JOBID/merged`. Keep `SERVED_MODEL_NAME` unchanged so that `evaluate.py` settings stay the same across base and fine-tuned runs.
 
+### Second base model: Qwen2.5-3B-Instruct
+
+`scripts/viking/qwen25_3b.sh` runs the same conditions and evaluations on `Qwen/Qwen2.5-3B-Instruct` @ `aa8e72537993ba99e69dfaafa59ed015b17504d1` (fetched by `download.sh`). It uses the same chat-template format (Hermes `<tool_call>`, `<|im_start|>` turns), so `train_lora.py` is unchanged. Under its tokenizer, 2 of 2,000 `train_p00` and 1 of 400 `val_benign` conversations exceed 9,216 tokens and are dropped. Runs go to `results/lora-qwen25-3b-CONDITION-JOBID/`. The native context is 32,768 tokens, so serving uses `MAX_MODEL_LEN=32768` for every benchmark, including the multi-turn ones that use 65,536 on Qwen3-4B.
+
+```bash
+bash scripts/viking/qwen25_3b.sh eval-base
+bash scripts/viking/qwen25_3b.sh train                      # p00 p05 p10 p20, --merge
+bash scripts/viking/qwen25_3b.sh eval results/lora-qwen25-3b-p00-JOBID
+```
+
 ## Training-set build
 
 `scripts/data/build_trainset.py` builds `trainset/data/train_p00|p05|p10|p20.jsonl` (N=2,000, nested, seed 42), `val_benign.jsonl`, `attack_pool.jsonl`, `defense_pool.jsonl`, `trainset/stats/*` and `trainset/manifest.json`. Install with `uv pip install --python .venv-trainset/bin/python --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-trainset.txt`. `trainset/` is git-ignored and holds harmful data: never upload it.

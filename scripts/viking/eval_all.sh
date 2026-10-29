@@ -4,7 +4,7 @@
 #   tau-bench (agent_benchmarks.sbatch), HarmBench direct requests (harmbench.sbatch --model MODEL_PATH).
 # Usage (login node, project root):
 #   SBATCH_ACCOUNT=CODE bash scripts/viking/eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]
-# MODEL_PATH: a local merged dir, or the hub id (then MODEL_REVISION defaults to the pinned commit).
+# MODEL_PATH: a local merged dir, or a hub id (MODEL_REVISION defaults to the pinned commit for the two base models).
 # CHAT_TEMPLATE: optional serving template, e.g. templates/ptst.jinja (F4 PTST).
 # Extra sbatch options for every job: SBATCH_EXTRA="--mail-type=END --mail-user=..." (CUDA_MODULE etc. are exported).
 # Job ids are appended to results/eval_index.tsv (tag, benchmark, jobid, model_path, chat_template_sha256).
@@ -18,7 +18,11 @@ if [[ -d "$MODEL_PATH" ]]; then
     MODEL_PATH="$(cd "$MODEL_PATH" && pwd)"
     unset MODEL_REVISION  # local weights have no hub revision
 else
-    export MODEL_REVISION="${MODEL_REVISION:-cdbee75f17c01a7cc42f958dc650907174af0554}"
+    case "$MODEL_PATH" in  # pinned commits of the hub base models
+        Qwen/Qwen3-4B-Instruct-2507) export MODEL_REVISION="${MODEL_REVISION:-cdbee75f17c01a7cc42f958dc650907174af0554}" ;;
+        Qwen/Qwen2.5-3B-Instruct) export MODEL_REVISION="${MODEL_REVISION:-aa8e72537993ba99e69dfaafa59ed015b17504d1}" ;;
+        *) [[ -n "${MODEL_REVISION:-}" ]] || { echo "Export MODEL_REVISION (immutable commit) for $MODEL_PATH" >&2; exit 1; } ;;
+    esac
 fi
 template_sha="-"
 harmbench_template=()

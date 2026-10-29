@@ -69,6 +69,42 @@ class EvalAllTests(unittest.TestCase):
         self.assertNotIn("--chat-template", calls[6])
         self.assertEqual(index[1].split("\t")[4], "-")
 
+    def test_qwen25_hub_model_pinned(self):
+        _, calls, _ = self.run_script("Qwen/Qwen2.5-3B-Instruct", "qwen25-3b-base", revision=None)
+        self.assertTrue(all("MODEL_REVISION=aa8e72537993ba99e69dfaafa59ed015b17504d1" in c for c in calls))
+
+    def test_unknown_hub_model_needs_revision(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_script("org/other-model", "other", revision=None)
+
+
+class Qwen25DriverTests(unittest.TestCase):
+    """scripts/viking/qwen25_3b.sh: training jobs carry the Qwen2.5 model, pin and tag."""
+
+    def test_train_submits_tagged_jobs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            shutil.copytree(ROOT / "scripts", work / "scripts")
+            (work / "trainset/data").mkdir(parents=True)
+            for condition in ("p00", "p10"):
+                (work / f"trainset/data/train_{condition}.jsonl").write_text("")
+            bin_dir, log = work / "bin", work / "log"
+            bin_dir.mkdir(), log.mkdir()
+            (bin_dir / "sbatch").write_text(FAKE_SBATCH.replace("MODEL_REVISION=%s", "MODEL_REVISION=%s\\nTAG=%s COND=%s MAXLEN=%s")
+                                            .replace('"${MODEL_REVISION:-<unset>}"',
+                                                     '"${MODEL_REVISION:-<unset>}" "$MODEL_TAG" "$CONDITION" "$MAX_MODEL_LEN"'))
+            (bin_dir / "sbatch").chmod(0o755)
+            env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "LOG": str(log)}
+            out = subprocess.run(["bash", "scripts/viking/qwen25_3b.sh", "train", "p00", "p10", "--", "--limit", "8"],
+                                 cwd=work, env=env, check=True, capture_output=True, text=True).stdout
+            calls = [(log / str(i)).read_text() for i in (1, 2)]
+            for call, condition in zip(calls, ("p00", "p10")):
+                self.assertIn(f"--job-name=lora-qwen25-3b-{condition} scripts/viking/train_lora.sbatch --merge --limit 8", call)
+                self.assertIn("MODEL_PATH=Qwen/Qwen2.5-3B-Instruct", call)
+                self.assertIn("MODEL_REVISION=aa8e72537993ba99e69dfaafa59ed015b17504d1", call)
+                self.assertIn(f"TAG=qwen25-3b COND={condition} MAXLEN=32768", call)
+            self.assertIn("results/lora-qwen25-3b-p10-102", out)
+
 
 if __name__ == "__main__":
     unittest.main()
