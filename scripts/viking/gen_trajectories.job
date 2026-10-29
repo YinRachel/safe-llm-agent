@@ -47,6 +47,8 @@ export TP QUANT
 # FlashInfer's sampler JIT-compiles with nvcc at startup: use it only when a CUDA toolkit is loaded (CUDA_MODULE).
 if command -v nvcc >/dev/null 2>&1; then export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-1}"
 else export VLLM_USE_FLASHINFER_SAMPLER=0; fi
+# Single-node tensor parallelism talks over NVLink/PCIe; NCCL's network plugin init segfaulted on the H100 nodes, so disable it.
+export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN:-none}" NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}" NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 PORT=8000
 mkdir -p logs
 vllm serve "$MODEL" --revision "$MISTRAL_REVISION" --served-model-name "$MODEL" \
