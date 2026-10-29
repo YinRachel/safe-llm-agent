@@ -148,7 +148,7 @@ sbatch --account=YOUR_PROJECT_CODE --time=01:00:00 scripts/viking/agent_benchmar
 sbatch --account=YOUR_PROJECT_CODE scripts/viking/agent_benchmarks.sbatch agentharm-harmful
 ```
 
-Results go to `results/agentharm-harmful-JOBID/`. `dataset.jsonl` contains the harmful prompts; `results/` is git-ignored, so keep it that way and do not publish it. As with the benign task, AgentHarm examples are evaluation-only and must never be used for training.
+Results go to `results/qwen4B_base/agentharm-harmful-JOBID/` (see the layout note under the Viking section). `dataset.jsonl` contains the harmful prompts; `results/` is git-ignored, so keep it that way and do not publish it. As with the benign task, AgentHarm examples are evaluation-only and must never be used for training.
 
 ## Agent capability benchmarks: BFCL v3 multi-turn and τ-bench
 
@@ -178,7 +178,7 @@ sbatch --account=YOUR_PROJECT_CODE scripts/viking/agent_benchmarks.sbatch bfcl-m
 sbatch --account=YOUR_PROJECT_CODE scripts/viking/agent_benchmarks.sbatch tau-bench --domains retail airline
 ```
 
-The first argument selects the benchmark (`bfcl-multiturn`, `tau-bench`, `agentharm-harmful`, `asb` or `agent-safetybench`); the remaining arguments go to `evaluate.py`. The job requests 12 hours (override with `sbatch --time`), serves Qwen with a 64K context (override with `MAX_MODEL_LEN`), and writes `results/<benchmark>-JOBID/`.
+The first argument selects the benchmark (`bfcl-multiturn`, `tau-bench`, `agentharm-harmful`, `asb` or `agent-safetybench`); the remaining arguments go to `evaluate.py`. The job requests 12 hours (override with `sbatch --time`), serves Qwen with a 64K context (override with `MAX_MODEL_LEN`), and writes `results/<model>_base/<benchmark>-JOBID/` for a hub model, or `<run>/eval/<benchmark>-JOBID/` when `MODEL_PATH` is a local `results/<model>_<method>/<run>/merged` (logic in `scripts/viking/results_dir.sh`).
 
 References: [BFCL V3 multi-turn](https://gorilla.cs.berkeley.edu/blogs/13_bfcl_v3_multi_turn.html), [official BFCL](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard), [τ-bench paper](https://arxiv.org/abs/2406.12045), [τ²-bench paper](https://arxiv.org/abs/2506.07982), [Inspect Evals BFCL and Tau2 ports](https://github.com/UKGovernmentBEIS/inspect_evals).
 
@@ -312,7 +312,7 @@ sbatch --account=YOUR_PROJECT_CODE scripts/viking/agentharm.sbatch
 squeue -u "$USER"
 ```
 
-This requests one GPU on Viking's documented `gpu` partition, starts the Qwen server on the allocated compute node, waits for health readiness, runs evaluation against that node's localhost endpoint, and stops the server on exit. No browser, manually opened localhost session, or second allocation is needed. Use a real project account in place of `YOUR_PROJECT_CODE`. Logs are `logs/qwen-agentharm-JOBID.out` and `logs/vllm-JOBID.log`; results are `results/agentharm-JOBID/`. Adjust the requested time and memory to your measured workload. `gpuplus` is an optional partition override for an H100 allocation.
+This requests one GPU on Viking's documented `gpu` partition, starts the Qwen server on the allocated compute node, waits for health readiness, runs evaluation against that node's localhost endpoint, and stops the server on exit. No browser, manually opened localhost session, or second allocation is needed. Use a real project account in place of `YOUR_PROJECT_CODE`. Logs are `logs/qwen-agentharm-JOBID.out` and `logs/vllm-JOBID.log`; results are `results/qwen4B_base/agentharm-JOBID/`. Viking jobs group outputs as `results/<model>_<method>/<run>` (`qwen4B` = Qwen3-4B-Instruct-2507, `qwen2.5-3B` = Qwen2.5-3B-Instruct; method `base`, `LoRA`, `SFT`, `SafeLoRA`, ...); evaluations of a fine-tuned run land in `<run>/eval/`. `MODEL_TAG` overrides the model part. Adjust the requested time and memory to your measured workload. `gpuplus` is an optional partition override for an H100 allocation.
 
 The judge requires outbound access to Runware from the compute node, and initial model/dataset downloads require access to Hugging Face. Test the judge first; if the cluster blocks outbound inference access, a separate permitted judge routing arrangement is needed. Do not run GPU inference on a login node. The local HarmBench classifier is a separate job over existing completion files, as described above; it does not produce benign benchmark tasks.
 
@@ -362,7 +362,7 @@ Monitoring and results:
 ```bash
 squeue -u "$USER"
 tail -f logs/harmbench-smoke-JOBID.out
-cat results/harmbench-JOBID/summary.json
+cat results/qwen4B_base/harmbench-JOBID/summary.json
 ```
 
 `generation/manifest.json` records source count, selection mode, selected IDs, source hash, model identity and generation configuration. `generation/behaviors.csv` freezes selected samples; `generation/responses.jsonl` records responses, finish reasons and token counts immediately; `generation/completions.json` is saved atomically after every batch. `generation/generation_summary.json` counts truncated outputs. `scoring/predictions.jsonl` and `scoring/results.json` preserve raw labels and scoring method. `scoring/summary.json` describes coverage of the selected CSV; the **top-level `summary.json`** also records whether the original source CSV was fully evaluated. A smoke run must never be reported as a full-set score.
@@ -417,10 +417,10 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export TOKENIZERS_PARALLELISM=false
 sbatch --account=YOUR_PROJECT_CODE --job-name=harmbench-score-retry \
   scripts/viking/harmbench.sbatch \
-  --score-existing results/harmbench-37930626/generation
+  --score-existing results/qwen4B_base/harmbench-37930626/generation
 ```
 
-`--score-existing` takes exactly one generation directory containing the saved manifest, selected behavior CSV and completion JSON. It skips Qwen, verifies full completion coverage of the selected CSV, and writes scoring plus the combined summary to the new job's `results/harmbench-JOBID/`. Original artifacts are preserved. If the saved data is a smoke selection, the retry remains a smoke result, not a full-set score. Once scoring succeeds, submit a new full job without `--score-existing` or `--smoke`.
+`--score-existing` takes exactly one generation directory containing the saved manifest, selected behavior CSV and completion JSON. It skips Qwen, verifies full completion coverage of the selected CSV, and writes scoring plus the combined summary to the new job's `results/qwen4B_base/harmbench-JOBID/`. Original artifacts are preserved. If the saved data is a smoke selection, the retry remains a smoke result, not a full-set score. Once scoring succeeds, submit a new full job without `--score-existing` or `--smoke`.
 
 ### Runware rejects max_tokens for GPT-6 Luna
 
@@ -448,16 +448,16 @@ CONDITION=p00 sbatch --account=YOUR_PROJECT_CODE --time=00:30:00 scripts/viking/
 for c in p00 p05 p10 p20; do CONDITION=$c sbatch --account=YOUR_PROJECT_CODE scripts/viking/train_lora.sbatch --merge; done
 ```
 
-Outputs go to `results/lora-CONDITION-JOBID/`: `manifest.json`, `adapter/`, `summary.json`, `log_history.json`, plus `merged/` when you pass `--merge`. All conditions use identical hyperparameters and seed. Evaluate each fine-tuned model with the existing benchmark scripts using `MODEL_PATH=results/lora-CONDITION-JOBID/merged`. Keep `SERVED_MODEL_NAME` unchanged so that `evaluate.py` settings stay the same across base and fine-tuned runs.
+Outputs go to `results/qwen4B_LoRA/CONDITION-JOBID/`: `manifest.json`, `adapter/`, `summary.json`, `log_history.json`, plus `merged/` when you pass `--merge`. All conditions use identical hyperparameters and seed. Evaluate each fine-tuned model with the existing benchmark scripts using `MODEL_PATH=results/qwen4B_LoRA/CONDITION-JOBID/merged`; their outputs go to `results/qwen4B_LoRA/CONDITION-JOBID/eval/`. Keep `SERVED_MODEL_NAME` unchanged so that `evaluate.py` settings stay the same across base and fine-tuned runs.
 
 ### Second base model: Qwen2.5-3B-Instruct
 
-`scripts/viking/qwen25_3b.sh` runs the same conditions and evaluations on `Qwen/Qwen2.5-3B-Instruct` @ `aa8e72537993ba99e69dfaafa59ed015b17504d1` (fetched by `download.sh`). It uses the same chat-template format (Hermes `<tool_call>`, `<|im_start|>` turns), so `train_lora.py` is unchanged. Under its tokenizer, 2 of 2,000 `train_p00` and 1 of 400 `val_benign` conversations exceed 9,216 tokens and are dropped. Runs go to `results/lora-qwen25-3b-CONDITION-JOBID/`. The native context is 32,768 tokens, so serving uses `MAX_MODEL_LEN=32768` for every benchmark, including the multi-turn ones that use 65,536 on Qwen3-4B.
+`scripts/viking/qwen25_3b.sh` runs the same conditions and evaluations on `Qwen/Qwen2.5-3B-Instruct` @ `aa8e72537993ba99e69dfaafa59ed015b17504d1` (fetched by `download.sh`). It uses the same chat-template format (Hermes `<tool_call>`, `<|im_start|>` turns), so `train_lora.py` is unchanged. Under its tokenizer, 2 of 2,000 `train_p00` and 1 of 400 `val_benign` conversations exceed 9,216 tokens and are dropped. Runs go to `results/qwen2.5-3B_LoRA/CONDITION-JOBID/`, base-model evaluations to `results/qwen2.5-3B_base/`. The native context is 32,768 tokens, so serving uses `MAX_MODEL_LEN=32768` for every benchmark, including the multi-turn ones that use 65,536 on Qwen3-4B.
 
 ```bash
 bash scripts/viking/qwen25_3b.sh eval-base
 bash scripts/viking/qwen25_3b.sh train                      # p00 p05 p10 p20, --merge
-bash scripts/viking/qwen25_3b.sh eval results/lora-qwen25-3b-p00-JOBID
+bash scripts/viking/qwen25_3b.sh eval results/qwen2.5-3B_LoRA/p00-JOBID
 ```
 
 ## Training-set build

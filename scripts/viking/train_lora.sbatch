@@ -16,5 +16,7 @@ TRAIN_PYTHON="${TRAIN_PYTHON:-$PWD/.venv-serve-cu128/bin/python}"
 [[ -x "$TRAIN_PYTHON" ]] || { echo "Training Python missing: $TRAIN_PYTHON" >&2; exit 1; }
 "$TRAIN_PYTHON" -c 'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))'
 # Select the training mix with CONDITION (p00/p05/p10/p20). Remaining arguments go to train_lora.py, e.g. --limit 64 --max-steps 20 for a smoke run.
-# MODEL_PATH / MODEL_REVISION pick another base model; MODEL_TAG (e.g. qwen25-3b) then keeps its runs apart: results/lora-TAG-COND-JOB.
-"$TRAIN_PYTHON" scripts/post-training/train_lora.py --output "results/lora-${MODEL_TAG:+$MODEL_TAG-}${CONDITION:?export CONDITION=p00|p05|p10|p20}-${SLURM_JOB_ID}" --condition "$CONDITION" "$@"
+# MODEL_PATH / MODEL_REVISION pick another base model; MODEL_TAG (e.g. qwen2.5-3B) names it in the output folder.
+# Output: results/<MODEL_TAG>_LoRA/<CONDITION>-<jobid> (see scripts/viking/results_dir.sh).
+source scripts/viking/results_dir.sh
+"$TRAIN_PYTHON" scripts/post-training/train_lora.py --output "$(results_group lora "${MODEL_PATH:-}" "$@")/${CONDITION:?export CONDITION=p00|p05|p10|p20}-${SLURM_JOB_ID}" --condition "$CONDITION" "$@"

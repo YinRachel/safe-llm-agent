@@ -1,8 +1,8 @@
 """Post-fine-tuning defences (HANDOFF_lifecycle_baselines.md §4.P1/P2/P4, §4.x).
 
-  python scripts/post-training/posthoc_defense.py --method safelora --adapter results/lora-p10-JOB/adapter --output DIR [--select]
-  python scripts/post-training/posthoc_defense.py --method scale    --adapter results/lora-p10-JOB/adapter --output DIR [--select]
-  python scripts/post-training/posthoc_defense.py --method antidote --merged  results/lora-p10-JOB/merged  --output DIR [--select]
+  python scripts/post-training/posthoc_defense.py --method safelora --adapter results/qwen4B_LoRA/p10-JOB/adapter --output DIR [--select]
+  python scripts/post-training/posthoc_defense.py --method scale    --adapter results/qwen4B_LoRA/p10-JOB/adapter --output DIR [--select]
+  python scripts/post-training/posthoc_defense.py --method antidote --merged  results/qwen4B_LoRA/p10-JOB/merged  --output DIR [--select]
 
 safelora  P1 Safe LoRA: Hsu et al., NeurIPS 2024, arXiv:2405.16833; follows IBM/SafeLoRA@dc756cf model.py
           (get_aligned_matrix, projected_weighted). Per LoRA module, V = W_aligned - W_unaligned and C = V V^T / ||V||_F

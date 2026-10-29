@@ -8,6 +8,7 @@
 # CHAT_TEMPLATE: optional serving template, e.g. templates/ptst.jinja (F4 PTST).
 # Extra sbatch options for every job: SBATCH_EXTRA="--mail-type=END --mail-user=..." (CUDA_MODULE etc. are exported).
 # Job ids are appended to results/eval_index.tsv (tag, benchmark, jobid, model_path, chat_template_sha256).
+# Outputs: <run>/eval/<benchmark>-<jobid> for a local results/<model>_<method>/<run>/merged, results/<model>_base/ for a hub id.
 set -euo pipefail
 MODEL_PATH="${1:?usage: eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
 TAG="${2:?usage: eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"

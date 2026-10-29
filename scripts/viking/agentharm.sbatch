@@ -68,4 +68,4 @@ done
 [[ "$ready" == 1 ]] || { echo "vLLM startup timed out; see $MODEL_LOG" >&2; exit 1; }
 "$EVAL_PYTHON" scripts/eval/evaluate.py agentharm \
     --base-url "http://127.0.0.1:$PORT/v1" \
-    --output "results/agentharm-${SLURM_JOB_ID}" "$@"
+    --output "$(source scripts/viking/results_dir.sh && eval_root)/agentharm-${SLURM_JOB_ID}" "$@"

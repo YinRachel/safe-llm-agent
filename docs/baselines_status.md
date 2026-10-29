@@ -17,7 +17,7 @@ run on a GPU** and the defender generation (Phase 2 data) has not run.
 | F4 | PTST | ✔ | `templates/ptst.jinja` (`safety_template.py`), `CHAT_TEMPLATE` in `serve_qwen.sh`, `generate_harmbench.py --chat-template`, `evaluate.py` manifest | byte-identical rendering ± safety text in all four system/tools branches; hooks only active when set | nothing |
 | P1 | Safe LoRA | ✔ (gated) | `posthoc_defense.py --method safelora` | rank-1 cosine 1; equals explicit upstream projector; name matching under shuffled order; K=0 identity; shape mismatch stops | **decision on the unaligned reference (Q2)** |
 | P2 | Antidote | ✔ | `--method antidote` | exact fraction per layer; zeroed = top scores; ratio 0 identity; hooks removed | Phase 2 (calibration set) |
-| P3 | Safety DPO re-alignment | ✔ | `--method dpo --model results/lora-pXX-*/merged` | shared with A2 | Phase 2 |
+| P3 | Safety DPO re-alignment | ✔ | `--method dpo --model results/qwen4B_LoRA/pXX-*/merged` | shared with A2 | Phase 2 |
 | P4 | LoRA down-scaling | ✔ | `--method scale` | s=0 → base weights; s=1 → attacked merged weights; sweep + selection | nothing |
 
 Shared: `defense_data.py` (tests incl. a byte-identical regression of the refactored `build_trainset.py qc`),
@@ -143,6 +143,8 @@ p05/p10/p20 harmful trajectories are capped at the same `MAX_TOKENS` by `build_t
 All commands are run from the repo root on a login node. Results are only compared on p10 at first (priority: p10, p00,
 p20, p05). Every final model is evaluated with `SBATCH_ACCOUNT=CODE bash scripts/viking/eval_all.sh <merged dir> <tag>`
 (5 jobs, ids in `results/eval_index.tsv`).
+Runs are grouped as `results/<model>_<method>/<run>` (e.g. `results/qwen4B_LoRA/p10-<JOB>`, see
+`scripts/viking/results_dir.sh`); evaluations of a run go to `<run>/eval/`, of a hub model to `results/<model>_base/`.
 
 **Day 0**
 ```bash
@@ -155,16 +157,16 @@ SCRATCH=/mnt/scratch/users/$USER bash scripts/viking/download.sh      # now also
 ```bash
 # A0 safety SFT -> M_A0, then the unchanged user attack per condition (--output overrides the sbatch default name)
 METHOD=sft STAGE=align TRAIN=trainset/derived/align_sft.jsonl sbatch --account=CODE scripts/viking/train_defense.sbatch --merge
-CONDITION=p10 sbatch --account=CODE scripts/viking/train_lora.sbatch --model results/align-sft-<JOB>/merged --merge --output results/a0-attack-p10
+CONDITION=p10 sbatch --account=CODE scripts/viking/train_lora.sbatch --model results/qwen4B_SFT/align-<JOB>/merged --merge --output results/qwen4B_SFT/a0-attack-p10
 
 # F1 SafeInstr: m sweep on p10, then the chosen m for every condition
 for m in 50 100 200; do CONDITION=p10 sbatch --account=CODE scripts/viking/train_lora.sbatch \
-  --train trainset/derived/safeinstr_p10_m$m.jsonl --merge --output results/ft-safeinstr-m$m-p10; done
-for run in results/lora-p10-<JOB> results/ft-safeinstr-m{50,100,200}-p10; do sbatch --account=CODE --partition=gpu --gres=gpu:1 --time=01:00:00 \
+  --train trainset/derived/safeinstr_p10_m$m.jsonl --merge --output results/qwen4B_SafeInstr/m$m-p10; done
+for run in results/qwen4B_LoRA/p10-<JOB> results/qwen4B_SafeInstr/m{50,100,200}-p10; do sbatch --account=CODE --partition=gpu --gres=gpu:1 --time=01:00:00 \
   --wrap ".venv-serve-cu128/bin/python scripts/post-training/selection_metrics.py measure --model $run/merged --out $run/selection_metrics.json"; done
-.venv-trainset/bin/python scripts/post-training/selection_metrics.py pick --reference results/lora-p10-<JOB>/selection_metrics.json \
-  --candidate m50=results/ft-safeinstr-m50-p10/selection_metrics.json --candidate m100=results/ft-safeinstr-m100-p10/selection_metrics.json \
-  --candidate m200=results/ft-safeinstr-m200-p10/selection_metrics.json --out results/ft-safeinstr-selection-p10.json
+.venv-trainset/bin/python scripts/post-training/selection_metrics.py pick --reference results/qwen4B_LoRA/p10-<JOB>/selection_metrics.json \
+  --candidate m50=results/qwen4B_SafeInstr/m50-p10/selection_metrics.json --candidate m100=results/qwen4B_SafeInstr/m100-p10/selection_metrics.json \
+  --candidate m200=results/qwen4B_SafeInstr/m200-p10/selection_metrics.json --out results/qwen4B_SafeInstr/selection-p10.json
 
 # F2 Lisa, F3 constrained SFT
 METHOD=lisa STAGE=ft CONDITION=p10 sbatch --account=CODE scripts/viking/train_defense.sbatch --merge
@@ -172,15 +174,15 @@ METHOD=csft STAGE=ft CONDITION=p10 sbatch --account=CODE scripts/viking/train_de
 
 # F4 PTST: evaluation only (templates/ptst.jinja is committed; `.venv/bin/python scripts/post-training/safety_template.py` regenerates it)
 SBATCH_ACCOUNT=CODE bash scripts/viking/eval_all.sh Qwen/Qwen3-4B-Instruct-2507 base-ptst templates/ptst.jinja
-SBATCH_ACCOUNT=CODE bash scripts/viking/eval_all.sh results/lora-p10-<JOB>/merged p10-ptst templates/ptst.jinja
+SBATCH_ACCOUNT=CODE bash scripts/viking/eval_all.sh results/qwen4B_LoRA/p10-<JOB>/merged p10-ptst templates/ptst.jinja
 
 # P4 LoRA down-scaling: select s on p10, then the chosen s everywhere; s=0.5 as a fixed reference row
-METHOD=scale TAG=p10 sbatch --account=CODE scripts/viking/posthoc.sbatch --adapter results/lora-p10-<JOB>/adapter --select
-METHOD=scale TAG=p00-s0.5 sbatch --account=CODE scripts/viking/posthoc.sbatch --adapter results/lora-p00-<JOB>/adapter --scale 0.5
+METHOD=scale TAG=p10 sbatch --account=CODE scripts/viking/posthoc.sbatch --adapter results/qwen4B_LoRA/p10-<JOB>/adapter --select
+METHOD=scale TAG=p00-s0.5 sbatch --account=CODE scripts/viking/posthoc.sbatch --adapter results/qwen4B_LoRA/p00-<JOB>/adapter --scale 0.5
 
 # P1 Safe LoRA: diagnostics first (Q2), then, once the reference pair is approved:
-METHOD=safelora TAG=p10-report sbatch --account=CODE scripts/viking/posthoc.sbatch --adapter results/lora-p10-<JOB>/adapter --report-only
-METHOD=safelora TAG=p10 sbatch --account=CODE scripts/viking/posthoc.sbatch --adapter results/lora-p10-<JOB>/adapter --select --accept-lineage
+METHOD=safelora TAG=p10-report sbatch --account=CODE scripts/viking/posthoc.sbatch --adapter results/qwen4B_LoRA/p10-<JOB>/adapter --report-only
+METHOD=safelora TAG=p10 sbatch --account=CODE scripts/viking/posthoc.sbatch --adapter results/qwen4B_LoRA/p10-<JOB>/adapter --select --accept-lineage
 ```
 
 **Phase 2: after the defender generation job**
@@ -192,12 +194,12 @@ CANDIDATES=$SCRATCH/agentft/derived/defender_candidates.jsonl GEN_OUTPUT=$SCRATC
 # A1 Booster -> M_A1 -> attack; A2 DPO immunisation -> M_A2 -> attack
 METHOD=booster STAGE=align TRAIN=trainset/derived/align_sft.jsonl sbatch --account=CODE --time=1-12:00:00 scripts/viking/train_defense.sbatch --merge
 METHOD=dpo STAGE=align sbatch --account=CODE scripts/viking/train_defense.sbatch --merge
-CONDITION=p10 sbatch --account=CODE scripts/viking/train_lora.sbatch --model results/align-booster-<JOB>/merged --merge --output results/a1-attack-p10
-CONDITION=p10 sbatch --account=CODE scripts/viking/train_lora.sbatch --model results/align-dpo-<JOB>/merged --merge --output results/a2-attack-p10
+CONDITION=p10 sbatch --account=CODE scripts/viking/train_lora.sbatch --model results/qwen4B_Booster/align-<JOB>/merged --merge --output results/qwen4B_Booster/a1-attack-p10
+CONDITION=p10 sbatch --account=CODE scripts/viking/train_lora.sbatch --model results/qwen4B_DPO/align-<JOB>/merged --merge --output results/qwen4B_DPO/a2-attack-p10
 
 # P2 Antidote (select ratio on p10), P3 DPO re-alignment of the attacked model
-METHOD=antidote TAG=p10 sbatch --account=CODE scripts/viking/posthoc.sbatch --merged results/lora-p10-<JOB>/merged --select
-METHOD=dpo STAGE=post CONDITION=p10 MODEL_PATH=results/lora-p10-<JOB>/merged sbatch --account=CODE scripts/viking/train_defense.sbatch --merge
+METHOD=antidote TAG=p10 sbatch --account=CODE scripts/viking/posthoc.sbatch --merged results/qwen4B_LoRA/p10-<JOB>/merged --select
+METHOD=dpo STAGE=post CONDITION=p10 MODEL_PATH=results/qwen4B_LoRA/p10-<JOB>/merged sbatch --account=CODE scripts/viking/train_defense.sbatch --merge
 ```
 
 Results table columns: method, stage, p, AgentHarm-harmful score↓ / refusal↑, AgentHarm-benign score↑ / refusal↓,

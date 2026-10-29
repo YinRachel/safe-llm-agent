@@ -13,7 +13,7 @@
 #   STAGE    align | ft | post (output-name prefix; default ft)
 #   CONDITION p00|p05|p10|p20 -> --condition (user data), or TRAIN=<jsonl> -> --train
 #   MODEL_PATH  model to start from (default: the pinned Qwen3-4B-Instruct-2507; a local merged dir for A-stage attacks / P3)
-# Output: results/<STAGE>-<METHOD>[-<CONDITION>]-<jobid>. Remaining arguments go to train_defense.py, e.g.
+# Output: results/<MODEL_TAG>_<METHOD>/<STAGE>[-<CONDITION>]-<jobid>, e.g. results/qwen4B_SFT/align-123 (scripts/viking/results_dir.sh). Remaining arguments go to train_defense.py, e.g.
 #   METHOD=sft STAGE=align TRAIN=trainset/derived/align_sft.jsonl sbatch --account=CODE scripts/viking/train_defense.sbatch --merge
 # Booster runs 3 forward/backward passes per micro-step: submit with --time=1-12:00:00. DPO holds a refusal and a full
 # trajectory per micro-step; use --partition=gpuplus if the A40 runs out of memory.
@@ -29,5 +29,6 @@ STAGE="${STAGE:-ft}"
 data=()
 if [[ -n "${CONDITION:-}" ]]; then data+=(--condition "$CONDITION"); fi
 if [[ -n "${TRAIN:-}" ]]; then data+=(--train "$TRAIN"); fi
-name="results/${STAGE}-${METHOD}${CONDITION:+-$CONDITION}-${SLURM_JOB_ID}"
+source scripts/viking/results_dir.sh
+name="$(results_group "$METHOD" "${MODEL_PATH:-}" "$@")/${STAGE}${CONDITION:+-$CONDITION}-${SLURM_JOB_ID}"
 "$TRAIN_PYTHON" scripts/post-training/train_defense.py --method "$METHOD" --output "$name" "${data[@]}" "$@"

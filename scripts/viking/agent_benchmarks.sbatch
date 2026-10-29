@@ -73,7 +73,9 @@ PY
     sleep 2
 done
 [[ "$ready" == 1 ]] || { echo "vLLM startup timed out; see $MODEL_LOG" >&2; exit 1; }
-RUN_DIR="results/${BENCHMARK}-${SLURM_JOB_ID}"
+# <run>/eval/ for a local model, results/<MODEL_TAG>_base/ for a hub model (scripts/viking/results_dir.sh).
+source scripts/viking/results_dir.sh
+RUN_DIR="$(eval_root)/${BENCHMARK}-${SLURM_JOB_ID}"
 "$EVAL_PYTHON" scripts/eval/evaluate.py "$BENCHMARK" \
     --base-url "http://127.0.0.1:$PORT/v1" \
     --output "$RUN_DIR" "$@"

@@ -24,7 +24,7 @@ class EvalAllTests(unittest.TestCase):
         shutil.copytree(ROOT / "scripts", work / "scripts")
         (work / "templates").mkdir()
         (work / "templates/ptst.jinja").write_text("T")
-        model = work / "results/lora-p10-1/merged"
+        model = work / "results/qwen4B_LoRA/p10-1/merged"
         model.mkdir(parents=True)
         (model / "config.json").write_text("{}")
         bin_dir, log = work / "bin", work / "log"
@@ -44,13 +44,13 @@ class EvalAllTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_seven_jobs_with_template(self):
-        work, calls, index = self.run_script("results/lora-p10-1/merged", "p10-ptst", "templates/ptst.jinja")
+        work, calls, index = self.run_script("results/qwen4B_LoRA/p10-1/merged", "p10-ptst", "templates/ptst.jinja")
         self.assertEqual(len(calls), 7)
         self.assertIn("scripts/viking/agentharm.sbatch", calls[0])
         for bench in ("agentharm-harmful", "asb", "agent-safetybench", "bfcl-multiturn", "tau-bench"):
             self.assertTrue(any(f"agent_benchmarks.sbatch {bench}" in c for c in calls), bench)
         harmbench = calls[6].split("\n")[0]
-        model = str((work / "results/lora-p10-1/merged").resolve())
+        model = str((work / "results/qwen4B_LoRA/p10-1/merged").resolve())
         self.assertIn(f"--model {model}", harmbench)
         self.assertIn(f"--chat-template {work.resolve() / 'templates/ptst.jinja'}", harmbench)
         for call in calls:
@@ -70,7 +70,7 @@ class EvalAllTests(unittest.TestCase):
         self.assertEqual(index[1].split("\t")[4], "-")
 
     def test_qwen25_hub_model_pinned(self):
-        _, calls, _ = self.run_script("Qwen/Qwen2.5-3B-Instruct", "qwen25-3b-base", revision=None)
+        _, calls, _ = self.run_script("Qwen/Qwen2.5-3B-Instruct", "qwen2.5-3B-base", revision=None)
         self.assertTrue(all("MODEL_REVISION=aa8e72537993ba99e69dfaafa59ed015b17504d1" in c for c in calls))
 
     def test_unknown_hub_model_needs_revision(self):
@@ -99,11 +99,38 @@ class Qwen25DriverTests(unittest.TestCase):
                                  cwd=work, env=env, check=True, capture_output=True, text=True).stdout
             calls = [(log / str(i)).read_text() for i in (1, 2)]
             for call, condition in zip(calls, ("p00", "p10")):
-                self.assertIn(f"--job-name=lora-qwen25-3b-{condition} scripts/viking/train_lora.sbatch --merge --limit 8", call)
+                self.assertIn(f"--job-name=lora-qwen2.5-3B-{condition} scripts/viking/train_lora.sbatch --merge --limit 8", call)
                 self.assertIn("MODEL_PATH=Qwen/Qwen2.5-3B-Instruct", call)
                 self.assertIn("MODEL_REVISION=aa8e72537993ba99e69dfaafa59ed015b17504d1", call)
-                self.assertIn(f"TAG=qwen25-3b COND={condition} MAXLEN=32768", call)
-            self.assertIn("results/lora-qwen25-3b-p10-102", out)
+                self.assertIn(f"TAG=qwen2.5-3B COND={condition} MAXLEN=32768", call)
+            self.assertIn("results/qwen2.5-3B_LoRA/p10-102", out)
+
+
+class ResultsDirTests(unittest.TestCase):
+    """scripts/viking/results_dir.sh: results/<model>_<method>/<run> naming."""
+
+    def call(self, expr, **env):
+        script = f"source scripts/viking/results_dir.sh && {expr}"
+        env = {**{k: v for k, v in os.environ.items() if k not in ("MODEL_TAG", "MODEL_PATH", "RESULTS_DIR")}, **env}
+        return subprocess.run(["bash", "-c", script], cwd=ROOT, env=env, check=True, capture_output=True, text=True).stdout.strip()
+
+    def test_training_groups(self):
+        self.assertEqual(self.call("results_group lora --merge"), "results/qwen4B_LoRA")
+        self.assertEqual(self.call("results_group lora", MODEL_TAG="qwen2.5-3B"), "results/qwen2.5-3B_LoRA")
+        self.assertEqual(self.call("results_group lora Qwen/Qwen2.5-3B-Instruct"), "results/qwen2.5-3B_LoRA")
+        self.assertEqual(self.call("results_group safelora --adapter results/qwen2.5-3B_LoRA/p10-1/adapter"),
+                         "results/qwen2.5-3B_SafeLoRA")
+        self.assertEqual(self.call("results_group dpo /abs/results/qwen4B_LoRA/p10-1/merged"), "results/qwen4B_DPO")
+
+    def test_eval_roots(self):
+        self.assertEqual(self.call("eval_root"), "results/qwen4B_base")
+        self.assertEqual(self.call("eval_root", MODEL_PATH="Qwen/Qwen2.5-3B-Instruct"), "results/qwen2.5-3B_base")
+        with tempfile.TemporaryDirectory() as tmp:
+            merged = Path(tmp) / "results/qwen4B_LoRA/p10-1/merged"
+            merged.mkdir(parents=True)
+            self.assertEqual(self.call("eval_root", MODEL_PATH=str(merged)), str(merged.parent / "eval"))
+            self.assertEqual(self.call(f"eval_root {merged}/"), str(merged.parent / "eval"))
+        self.assertEqual(self.call("eval_root", RESULTS_DIR="results/x"), "results/x")
 
 
 if __name__ == "__main__":

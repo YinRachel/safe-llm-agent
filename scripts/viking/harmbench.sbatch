@@ -28,7 +28,11 @@ nvcc --version
 cd "${SLURM_SUBMIT_DIR:?Submit from the project root}"
 HB_PYTHON="${HB_PYTHON:-$PWD/.venv-serve/bin/python}"
 HARMBENCH_REPO="${HARMBENCH_REPO:-$PWD/third_party/HarmBench}"
-RUN_DIR="results/harmbench-${SLURM_JOB_ID}"
+# <run>/eval/ for a local model, results/<MODEL_TAG>_base/ for a hub model (scripts/viking/results_dir.sh).
+source scripts/viking/results_dir.sh
+hb_model="${MODEL_PATH:-}"
+for ((i=1; i<$#; i++)); do [[ "${!i}" == --model ]] && { j=$((i+1)); hb_model="${!j}"; }; done
+RUN_DIR="$(eval_root "$hb_model")/harmbench-${SLURM_JOB_ID}"
 GENERATION_DIR="$RUN_DIR/generation"
 score_existing=0
 if [[ "${1:-}" == --score-existing ]]; then
