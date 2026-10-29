@@ -81,6 +81,21 @@ class AgentBenchmarkTests(unittest.TestCase):
             summary = json.loads((Path(directory) / "summary.json").read_text())
             self.assertEqual(summary[0]["context_exhausted_sample_ids"], ["s1"])
 
+    def test_vllm_context_overflow_ends_sample_instead_of_erroring(self):
+        import httpx
+        from openai import BadRequestError
+        api = evaluate.target_model(make_args()).api
+        request = httpx.Request("POST", "http://localhost:8000/v1/chat/completions")
+
+        def bad_request(message):
+            body = {"message": message, "type": "BadRequestError", "code": 400}
+            return BadRequestError(message, response=httpx.Response(400, request=request), body=body)
+        overflow = api.handle_bad_request(bad_request(
+            "This model's maximum context length is 65536 tokens. However, your request has 73939 input tokens."))
+        self.assertEqual(overflow.stop_reason, "model_length")
+        other = bad_request("Invalid tool schema")
+        self.assertIs(api.handle_bad_request(other), other)
+
     def test_empty_or_failed_runs_raise(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(RuntimeError):

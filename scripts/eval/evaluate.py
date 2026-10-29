@@ -212,11 +212,9 @@ def preflight(args):
 
 def run_agentharm(args, output, harmful=False):
     from inspect_ai import eval as inspect_eval
-    from inspect_ai.model import get_model
     from inspect_evals.agentharm import agentharm, agentharm_benign
     # Explicit endpoints keep local solver traffic separate from judge traffic.
-    target = get_model("openai-api/local/" + args.model, base_url=args.base_url,
-                       api_key=os.getenv("TARGET_API_KEY", "local"))
+    target = target_model(args)
     judge, _ = make_judge(args)
     task = (agentharm if harmful else agentharm_benign)(
         split=args.split, refusal_judge=judge, semantic_judge=judge,
@@ -254,9 +252,19 @@ def run_agentharm(args, output, harmful=False):
 
 
 def target_model(args):
-    from inspect_ai.model import get_model
-    return get_model("openai-api/local/" + args.model, base_url=args.base_url,
-                     api_key=os.getenv("TARGET_API_KEY", "local"))
+    from inspect_ai.model import ModelOutput, get_model
+    model = get_model("openai-api/local/" + args.model, base_url=args.base_url,
+                      api_key=os.getenv("TARGET_API_KEY", "local"))
+    # inspect maps only OpenAI's context_length_exceeded code to model_length; vLLM sends code 400 with
+    # "maximum context length", which would error the sample and fail the run. End the sample instead.
+    upstream = model.api.handle_bad_request
+
+    def handle_bad_request(ex):
+        if ex.status_code == 400 and "maximum context length" in str(ex):
+            return ModelOutput.from_content(model.api.model_name, content=str(ex), stop_reason="model_length")
+        return upstream(ex)
+    model.api.handle_bad_request = handle_bad_request
+    return model
 
 
 def snapshot_datasets(tasks, output):
