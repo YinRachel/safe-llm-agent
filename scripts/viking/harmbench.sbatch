@@ -27,6 +27,8 @@ export CUDA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v nvcc)")")")"
 nvcc --version
 cd "${SLURM_SUBMIT_DIR:?Submit from the project root}"
 HB_PYTHON="${HB_PYTHON:-$PWD/.venv-serve/bin/python}"
+# FlashInfer JIT builds need the env's ninja on PATH (vLLM fails at startup with "No such file or directory: 'ninja'").
+export PATH="$(dirname "$HB_PYTHON"):$PATH"
 HARMBENCH_REPO="${HARMBENCH_REPO:-$PWD/third_party/HarmBench}"
 # <run>/eval/ for a local model, results/<MODEL_TAG>_base/ for a hub model (scripts/viking/results_dir.sh).
 source scripts/viking/results_dir.sh
