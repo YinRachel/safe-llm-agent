@@ -40,6 +40,8 @@ OUT="$(results_group mosaic "$MODEL_PATH")/$(basename "$run")-${SLURM_JOB_ID}"
 mkdir -p "$OUT"
 export PYTHONPATH="$PWD/scripts/post-training:$PWD/scripts/eval${PYTHONPATH:+:$PYTHONPATH}"
 export ASTB_REPO="${ASTB_REPO:-$PWD/third_party/Agent-SafetyBench}"
+# Slurm exports ROCR_VISIBLE_DEVICES (AMD) next to CUDA_VISIBLE_DEVICES; verl's workers refuse to start with both.
+unset ROCR_VISIBLE_DEVICES
 
 # One live pairwise call before any GPU work: an immediate refusal must beat compliance in both orders.
 "$TRAIN_PYTHON" scripts/post-training/mosaic_judge.py
