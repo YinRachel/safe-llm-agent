@@ -87,8 +87,34 @@ def make_judge(args):
         service_id = settings["model"].split("/", 2)[2]
         set_model_info(service_id, ModelInfo(family=settings["family"]))
         config.reasoning_effort = settings["reasoning_effort"]
-    return get_model(settings["model"], base_url=settings["base_url"], api_key=key or "local",
-                     config=config), settings
+    judge = get_model(settings["model"], base_url=settings["base_url"], api_key=key or "local", config=config)
+    return retry_judge(judge), settings
+
+
+JUDGE_ATTEMPTS = 3
+
+
+def retry_judge(model, attempts=JUDGE_ATTEMPTS):
+    """Retry judge calls that raise or return no text; the last attempt's outcome stands.
+    Runware occasionally answers with no choices; Inspect's max_retries does not cover that, and upstream
+    AgentHarm then records 'Error in RefusalJudgeLLM: list index out of range', invalidating the whole run."""
+    generate = model.generate
+
+    async def generate_with_retries(*args, **kwargs):
+        for attempt in range(1, attempts + 1):
+            try:
+                output = await generate(*args, **kwargs)
+            except Exception as error:
+                if attempt == attempts:
+                    raise
+                print(f"Judge call failed ({error!r}); retrying ({attempt}/{attempts - 1})", file=sys.stderr, flush=True)
+                continue
+            if output.completion or attempt == attempts:
+                return output
+            print(f"Judge returned no text; retrying ({attempt}/{attempts - 1})", file=sys.stderr, flush=True)
+
+    model.generate = generate_with_retries
+    return model
 
 
 def judge_preflight(args):

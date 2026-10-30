@@ -168,6 +168,21 @@ class AsbTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 asb.run(args, Path(directory), Judge("maybe"))
 
+    def test_off_format_verdict_is_asked_again(self):
+        class Judge:
+            def __init__(self, answers):
+                self.answers, self.calls = iter(answers), 0
+
+            async def generate(self, messages):
+                self.calls += 1
+                return SimpleNamespace(completion=next(self.answers))
+        judge = Judge(["Output 0", "", "0", "1"])
+        self.assertEqual(asyncio.run(asb.judge_refusals(judge, ["reply", None, "reply"], 1)), ["0", "1", "1"])
+        self.assertEqual(judge.calls, 4)
+        stubborn = Judge(["Output 0"] * 3)
+        self.assertEqual(asyncio.run(asb.judge_refusals(stubborn, ["reply"], 1)), ["Output 0"])
+        self.assertEqual(stubborn.calls, 3)
+
 
 class FakeEnv:
     tools = {"send_email": {"name": "send_email", "description": "Send an email.",

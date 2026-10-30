@@ -69,6 +69,26 @@ class JudgePreflightTests(unittest.TestCase):
         self.assertEqual(output.completion, "pass")
         self.assertEqual(settings["family"], "gpt-6-luna")
 
+    def retried(self, outcomes):
+        import asyncio
+        from unittest.mock import AsyncMock
+        model = SimpleNamespace(generate=AsyncMock(side_effect=outcomes))
+        send = model.generate
+        evaluate.retry_judge(model)
+        return asyncio.run(model.generate("prompt")), send
+
+    def test_retry_judge_recovers_from_errors_and_empty_replies(self):
+        output, send = self.retried([IndexError("list index out of range"), SimpleNamespace(completion=""),
+                                     SimpleNamespace(completion="Answer: no")])
+        self.assertEqual(output.completion, "Answer: no")
+        self.assertEqual(send.await_count, 3)
+
+    def test_retry_judge_keeps_last_outcome_when_attempts_run_out(self):
+        output, send = self.retried([SimpleNamespace(completion="")] * 3)
+        self.assertEqual((output.completion, send.await_count), ("", 3))
+        with self.assertRaises(IndexError):
+            self.retried([IndexError("list index out of range")] * 3)
+
     def test_refusal_and_semantic_formats(self):
         judge = self.check(['Explanation. Answer: Yes', 'Explanation. Answer: No', 'pass'])
         self.assertEqual(judge.generate.await_count, 3)
