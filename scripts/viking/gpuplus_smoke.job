@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=gpuplus_smoke
+#SBATCH --partition=gpuplus
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=00:15:00
+#SBATCH --output=logs/%x-%j.log
+#SBATCH --error=logs/%x-%j.err
+# 10-minute check of what blocked the Mistral-Large run, before queueing the long job:
+#   1. GPUs/driver, 2. two-GPU NCCL all_reduce with and without the NCCL workarounds (the earlier run segfaulted in
+#   ncclNetPluginInit), 3. whether the vLLM tokenizer finds its files. Submit from the repo root:
+#   ENV_DIR=$HOME/envs/agentft CUDA_MODULE=CUDA/12.8.0 sbatch scripts/viking/gpuplus_smoke.job
+set -uo pipefail
+SCRATCH="${SCRATCH:-/mnt/scratch/users/$USER}"
+module load Python/3.12.3-GCCcore-13.3.0
+if [[ -n "${CUDA_MODULE:-}" ]]; then module load "$CUDA_MODULE"; fi
+cd "${SLURM_SUBMIT_DIR:?Submit with sbatch from the repo root}"
+source "${ENV_DIR:-$HOME/envs/agentft}/bin/activate"
+export HF_HOME="$SCRATCH/hf_cache" HF_HUB_OFFLINE=1
+mkdir -p logs
+nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
+python -c "import torch,vllm; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'nccl', torch.cuda.nccl.version(), 'vllm', vllm.__version__)"
+cat > "${TMPDIR:-/tmp}/nccl_check.py" <<'PY'
+import os, torch, torch.distributed as dist
+dist.init_process_group("nccl")
+rank = dist.get_rank(); torch.cuda.set_device(rank)
+x = torch.ones(1024, 1024, device="cuda") * (rank + 1)
+dist.all_reduce(x)
+torch.cuda.synchronize()
+if rank == 0:
+    print("all_reduce ok, value", x[0, 0].item(), "(expect 3.0)")
+dist.destroy_process_group()
+PY
+echo "== NCCL with workarounds (NCCL_NET_PLUGIN=none NCCL_IB_DISABLE=1)"
+NCCL_NET_PLUGIN=none NCCL_IB_DISABLE=1 NCCL_DEBUG=WARN torchrun --standalone --nproc_per_node=2 "${TMPDIR:-/tmp}/nccl_check.py" 2>&1 | tail -15
+echo "== NCCL with workarounds + NCCL_NET=Socket"
+NCCL_NET=Socket NCCL_NET_PLUGIN=none NCCL_IB_DISABLE=1 NCCL_DEBUG=WARN torchrun --standalone --nproc_per_node=2 "${TMPDIR:-/tmp}/nccl_check.py" 2>&1 | tail -15
+echo "== NCCL with no workarounds"
+NCCL_DEBUG=WARN torchrun --standalone --nproc_per_node=2 "${TMPDIR:-/tmp}/nccl_check.py" 2>&1 | tail -15
+echo "== Mistral tokenizer files"
+SNAP="$(ls -d "$HF_HOME"/hub/models--mistralai--Mistral-Large-Instruct-2411/snapshots/* | head -1)"
+ls "$SNAP" | grep -vi consolidated
+python -c "
+from vllm.transformers_utils.tokenizers.mistral import MistralTokenizer
+t = MistralTokenizer.from_pretrained('$SNAP'); print('tokenizer ok')" 2>&1 | tail -3
