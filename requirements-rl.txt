@@ -1,0 +1,19 @@
+# MOSAIC GRPO (scripts/post-training/mosaic*.py, scripts/viking/mosaic_grpo.sbatch): extra packages for the existing
+# training env (.venv-serve-cu128: vLLM 0.10.2, torch 2.8.0+cu128, transformers 4.55.2, peft, ray, openai, dotenv):
+#   .venv-serve-cu128/bin/pip install -r requirements-rl.txt
+#   .venv-serve-cu128/bin/pip install --no-deps verl==0.6.1
+# verl goes in without its dependencies because it pins numpy<2, which would downgrade the env's numpy 2.x under vLLM
+# and opencv. The lines below are its remaining runtime dependencies. A dry run on Viking (2026-10-30) left torch, vLLM,
+# numpy and transformers untouched; it only moved packaging 26.3 -> 25.0 and fsspec 2026.9 -> 2026.2.
+# huggingface_hub stays below 1.0 for transformers 4.55.2 (datasets 5 would pull hub 2.x).
+tensordict>=0.8.0,!=0.9.0,<=0.10.0
+torchdata
+datasets<5
+huggingface_hub<1.0
+pyarrow>=19.0.0
+pandas
+hydra-core
+codetiming
+dill
+pybind11
+pylatexenc

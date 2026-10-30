@@ -6,7 +6,7 @@
 method_label() {  # train_lora / train_defense / posthoc_defense method -> folder suffix
     case "$1" in
         lora) echo LoRA ;; sft) echo SFT ;; csft) echo CSFT ;; dpo) echo DPO ;; lisa) echo Lisa ;; booster) echo Booster ;;
-        safelora) echo SafeLoRA ;; antidote) echo Antidote ;; scale) echo Scale ;; *) echo "$1" ;;
+        safelora) echo SafeLoRA ;; antidote) echo Antidote ;; scale) echo Scale ;; mosaic) echo MOSAIC ;; *) echo "$1" ;;
     esac
 }
 

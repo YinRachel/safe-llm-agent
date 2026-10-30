@@ -1,0 +1,4 @@
+# verl agent-loop registry entry (actor_rollout_ref.rollout.agent.agent_loop_config_path); the dataset's agent_name
+# column (mosaic.AGENT_NAME) selects it.
+- name: mosaic_agent
+  _target_: mosaic_agent_loop.MosaicAgentLoop
