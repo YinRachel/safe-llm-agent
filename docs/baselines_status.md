@@ -19,7 +19,7 @@ run on a GPU** and the defender generation (Phase 2 data) has not run.
 | P2 | Antidote | ✔ | `--method antidote` | exact fraction per layer; zeroed = top scores; ratio 0 identity; hooks removed | Phase 2 (calibration set) |
 | P3 | Safety DPO re-alignment | ✔ | `--method dpo --model results/qwen4B_LoRA/pXX-*/merged` | shared with A2 | Phase 2 |
 | P4 | LoRA down-scaling | ✔ | `--method scale` | s=0 → base weights; s=1 → attacked merged weights; sweep + selection | nothing |
-| P5 | PING (prefix injection guard, Hahm et al. AAAI 2026) | ✔ | `scripts/post-training/ping.py search` (Algorithm 1: k=3, M=5, T=20, τ=1.5) → `<run>/ping.jinja`, served via `CHAT_TEMPLATE` like F4 | prefix only after the generation prompt (byte-identical otherwise, real Qwen template); refusal match ignores the prefix; seeding/threshold/argmax on a fake agent (`tests/test_ping.py`) | judge key in `.env` (generator = project judge endpoint, or `PING_GENERATOR`) |
+| P5 | PING (prefix injection guard, Hahm et al. AAAI 2026) | ✔ | `scripts/post-training/ping.py search` (Algorithm 1: k=3, M=5, T=20, τ=1.5) → `<run>/ping.jinja`, served via `CHAT_TEMPLATE` like F4 | prefix only after the generation prompt (byte-identical otherwise, real Qwen template); refusal match ignores the prefix; benign success needs a parsed tool call and no refusal; seeding/threshold/argmax on a fake agent (`tests/test_ping.py`) | judge key in `.env` (generator = project judge endpoint, or `PING_GENERATOR`) |
 
 Shared: `defense_data.py` (tests incl. a byte-identical regression of the refactored `build_trainset.py qc`),
 `defense_common.py`, `selection_metrics.py` (selection rule tested), `train_defense.sbatch`,

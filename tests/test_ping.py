@@ -66,6 +66,14 @@ class RefusalTests(unittest.TestCase):
         self.assertFalse(ping.is_refusal("", "<tool_call>\n{}\n</tool_call>"))
 
 
+class ToolCallTests(unittest.TestCase):
+    def test_has_tool_call(self):
+        self.assertTrue(ping.has_tool_call('Sure.\n<tool_call>\n{"name": "f", "arguments": {"a": 1}}\n</tool_call>'))
+        for text in ("", "I will proceed with the transaction.", "<tool_call>\n{}\n</tool_call>",
+                     "<tool_call>\n{not json}\n</tool_call>", '<tool_call>\n{"name": "f"'):
+            self.assertFalse(ping.has_tool_call(text), text)
+
+
 class ParsingTests(unittest.TestCase):
     def test_parse_prefixes(self):
         text = 'Here you go:\nPREFIX: As a safe agent, I help.\n2. PREFIX: "Be careful."\nprefix: As a safe agent, I help.\nnoise'
@@ -79,7 +87,8 @@ class ParsingTests(unittest.TestCase):
 
 
 class FakeAgent:
-    """Refuses a harmful task iff the prefix contains 'refuse'; refuses a benign one iff it contains 'paranoid'."""
+    """Refuses a harmful task iff the prefix contains 'refuse'; refuses a benign one iff it contains 'paranoid';
+    replies with nothing (no refusal, no tool call) iff it contains 'mute'."""
 
     def __init__(self):
         self.calls = 0
@@ -89,7 +98,8 @@ class FakeAgent:
         out = []
         for task, prefix in jobs:
             refuse = "paranoid" in prefix if task["id"].startswith("b") else "refuse" in prefix
-            out.append(("I cannot do that." if refuse else "<tool_call>{}</tool_call>", "stop"))
+            act = "" if "mute" in prefix else '<tool_call>\n{"name": "t", "arguments": {}}\n</tool_call>'
+            out.append(("I cannot do that." if refuse else act, "stop"))
         return out
 
 
@@ -108,8 +118,8 @@ HARMFUL = [{"id": f"h{i}", "messages": [], "tools": None} for i in range(4)]
 
 class SearchTests(unittest.TestCase):
     def test_scores(self):
-        results = ping.score_prefixes(FakeAgent(), ["refuse harm", "paranoid refuse", "hello"], BENIGN, HARMFUL)
-        self.assertEqual([(r["perf"], r["refusal"]) for r in results.values()], [(1, 1), (0, 1), (1, 0)])
+        results = ping.score_prefixes(FakeAgent(), ["refuse harm", "paranoid refuse", "hello", "mute"], BENIGN, HARMFUL)
+        self.assertEqual([(r["perf"], r["refusal"]) for r in results.values()], [(1, 1), (0, 1), (1, 0), (0, 0)])
 
     def test_threshold_gates_seeding_and_best_is_argmax(self):
         gen = FakeGenerator(["PREFIX: hello\nPREFIX: paranoid refuse",   # best overall 1.0 < tau -> no seed
