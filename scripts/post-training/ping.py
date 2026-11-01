@@ -27,6 +27,8 @@ Project choices:
   * Serving: a chat template that is the checkpoint's own template plus the prefix after the generation prompt
     (`<|im_start|>assistant\\n` + prefix). Earlier assistant turns are rendered unchanged, and the prefix is part of
     the prompt, so returned completions and tool-call parsing see only the model's continuation.
+  * --separator blank-line (not in the paper) injects prefix + "\n\n". Without it, Qwen2.5-3B p00 ended 77% of benign
+    turns right after the prefix (empty reply instead of a tool call); "none" is the paper's form.
 
   python scripts/post-training/ping.py search --model results/qwen4B_LoRA/p10-JOB/merged --out results/qwen4B_PING/p10-X
       -> <out>/ping.jinja, ping.json, evaluated.jsonl, generator.jsonl, manifest.json
@@ -106,21 +108,26 @@ IMPORTANT: Only lines that start with "PREFIX:" will be considered as prefixes. 
 # ---------------------------------------------------------------------------------------------------- template
 
 
-def make_template(original, prefix):
-    """The checkpoint's template with `prefix` emitted right after its generation prompt (the template's last output)."""
+SEPARATORS = {"none": "", "blank-line": "\n\n"}
+
+
+def make_template(original, prefix, separator=""):
+    """The checkpoint's template with prefix + separator emitted right after its generation prompt (the template's
+    last output)."""
     if not prefix or "endraw" in prefix:
         raise ValueError("prefix must be non-empty and must not contain 'endraw'")
     return (PREAMBLE_MARK + original.rstrip("\n")
-            + "\n{%- if add_generation_prompt %}{% raw %}" + prefix + "{% endraw %}{%- endif %}")
+            + "\n{%- if add_generation_prompt %}{% raw %}" + prefix + separator + "{% endraw %}{%- endif %}")
 
 
-def write_template(out, prefix, original, extra=None):
-    template = make_template(original, prefix)
+def write_template(out, prefix, original, extra=None, separator=""):
+    template = make_template(original, prefix, separator)
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(template)
     meta = {"model": MODEL, "revision": REVISION, "original_template_sha256": sha256_text(original),
             "template_sha256": sha256_text(template), "prefix": prefix, "prefix_sha256": sha256_text(prefix),
+            "separator": separator,
             "method": "PING (Hahm et al., AAAI 2026): prefix appended after the assistant generation prompt",
             **(extra or {})}
     out.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
@@ -181,18 +188,19 @@ def sample_tasks(path, n, seed):
 class VllmAgent:
     """Greedy responses of the fine-tuned model; prompts rendered with the PING template of each prefix."""
 
-    def __init__(self, model, original_template, max_tokens, max_model_len, seed, gpu_memory_utilization):
+    def __init__(self, model, original_template, max_tokens, max_model_len, seed, gpu_memory_utilization, separator=""):
         from transformers import AutoTokenizer
         from vllm import LLM, SamplingParams
         self.tokenizer = AutoTokenizer.from_pretrained(model)
         self.original = original_template
+        self.separator = separator
         self.llm = LLM(model=model, max_model_len=max_model_len, seed=seed,
                        gpu_memory_utilization=gpu_memory_utilization)
         self.params = SamplingParams(temperature=0, top_p=1.0, max_tokens=max_tokens, seed=seed)
         self.max_prompt = max_model_len - max_tokens
 
     def render(self, task, prefix):
-        template = make_template(self.original, prefix) if prefix else self.original
+        template = make_template(self.original, prefix, self.separator) if prefix else self.original
         return self.tokenizer.apply_chat_template(task["messages"], tools=task["tools"], chat_template=template,
                                                   tokenize=False, add_generation_prompt=True)
 
@@ -207,13 +215,15 @@ class VllmAgent:
 
 
 def score_prefixes(agent, prefixes, benign, harmful):
-    """{prefix: result} with perf, refusal, overall and the per-task responses."""
+    """{prefix: result} with perf, refusal, overall and the per-task responses. The agent injects
+    prefix + agent.separator, and refusal matching skips all of it."""
+    separator = getattr(agent, "separator", "")
     jobs = [(task, prefix, kind) for prefix in prefixes for kind, tasks in (("benign", benign), ("harmful", harmful))
             for task in tasks]
     replies = agent.respond([(task, prefix) for task, prefix, _ in jobs])
     results = {p: {"prefix": p, "benign": [], "harmful": []} for p in prefixes}
     for (task, prefix, kind), (response, finish) in zip(jobs, replies):
-        results[prefix][kind].append({"id": task["id"], "refusal": is_refusal(prefix, response),
+        results[prefix][kind].append({"id": task["id"], "refusal": is_refusal(prefix + separator if prefix else "", response),
                                       "tool_call": has_tool_call(response),
                                       "finish_reason": finish, "response": response})
     for result in results.values():
@@ -386,7 +396,8 @@ def run_search(args):
                 "benign_ids": [t["id"] for t in benign], "harmful_ids": [t["id"] for t in harmful],
                 "inputs": {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in (args.benign, args.harmful)}}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    agent = VllmAgent(args.model, original, args.max_tokens, args.max_model_len, args.seed, args.gpu_memory_utilization)
+    agent = VllmAgent(args.model, original, args.max_tokens, args.max_model_len, args.seed, args.gpu_memory_utilization,
+                      SEPARATORS[args.separator])
     streams = {kind: (out / f"{kind}.jsonl").open("w", encoding="utf-8") for kind in ("generator", "evaluated")}
 
     def log(kind, record):
@@ -405,16 +416,18 @@ def run_search(args):
         for stream in streams.values():
             stream.close()
     summary = {k: best[k] for k in ("prefix", "perf", "refusal", "overall", "round")}
+    summary["separator"] = args.separator
     summary.update(n_evaluated=len(evaluated), no_prefix={k: no_prefix[k] for k in ("perf", "refusal", "overall")},
                    wall_clock_s=round(time.time() - start, 1))
     write_template(out / "ping.jinja", best["prefix"], original,
-                   {"search": summary, "model_searched": str(Path(args.model).resolve())})
+                   {"search": summary, "model_searched": str(Path(args.model).resolve())}, SEPARATORS[args.separator])
     (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 
 def run_template(args):
-    write_template(args.out, args.prefix, load_chat_template(args.base_model, args.revision), {"search": None})
+    write_template(args.out, args.prefix, load_chat_template(args.base_model, args.revision), {"search": None},
+                   SEPARATORS[args.separator])
 
 
 def main(argv=None):
@@ -442,6 +455,8 @@ def main(argv=None):
     for p in (s, t):
         p.add_argument("--base-model", default=MODEL, help="hub id whose chat template is wrapped (local HF cache)")
         p.add_argument("--revision", default=REVISION)
+        p.add_argument("--separator", choices=sorted(SEPARATORS), default="none",
+                       help="text after the prefix: none (paper) or blank-line (\\n\\n)")
     args = parser.parse_args(argv)
     {"search": run_search, "template": run_template}[args.command](args)
 

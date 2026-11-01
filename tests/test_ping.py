@@ -49,6 +49,9 @@ class TemplateTests(unittest.TestCase):
                         with_prompt = self.render(original, messages, tools, True)
                         self.assertTrue(with_prompt.endswith("<|im_start|>assistant\n"))
                         self.assertEqual(self.render(ours, messages, tools, True), with_prompt + PREFIX)
+                        spaced = ping.make_template(original, PREFIX, ping.SEPARATORS["blank-line"])
+                        self.assertEqual(self.render(spaced, messages, tools, False), self.render(original, messages, tools, False))
+                        self.assertEqual(self.render(spaced, messages, tools, True), with_prompt + PREFIX + "\n\n")
 
     def test_rejects_unembeddable_prefix(self):
         for bad in ("", "x {% endraw %} y"):
@@ -120,6 +123,16 @@ class SearchTests(unittest.TestCase):
     def test_scores(self):
         results = ping.score_prefixes(FakeAgent(), ["refuse harm", "paranoid refuse", "hello", "mute"], BENIGN, HARMFUL)
         self.assertEqual([(r["perf"], r["refusal"]) for r in results.values()], [(1, 1), (0, 1), (1, 0), (0, 0)])
+
+    def test_separator_is_not_matched_as_response(self):
+        agent = FakeAgent()
+        agent.respond = lambda jobs: [("cannot do it." if t["id"].startswith("h") else "", "stop") for t, _ in jobs]
+        agent.separator = "\n\n"
+        result = ping.score_prefixes(agent, ["Safety first. I"], BENIGN, HARMFUL)["Safety first. I"]
+        self.assertEqual(result["refusal"], 0)  # "I" + "\n\n" + "cannot" is not "i cannot"
+        agent.separator = ""
+        result = ping.score_prefixes(agent, ["Safety first. I "], BENIGN, HARMFUL)["Safety first. I "]
+        self.assertEqual(result["refusal"], 1)
 
     def test_threshold_gates_seeding_and_best_is_argmax(self):
         gen = FakeGenerator(["PREFIX: hello\nPREFIX: paranoid refuse",   # best overall 1.0 < tau -> no seed
