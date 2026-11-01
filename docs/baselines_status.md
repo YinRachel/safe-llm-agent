@@ -19,6 +19,7 @@ run on a GPU** and the defender generation (Phase 2 data) has not run.
 | P2 | Antidote | ✔ | `--method antidote` | exact fraction per layer; zeroed = top scores; ratio 0 identity; hooks removed | Phase 2 (calibration set) |
 | P3 | Safety DPO re-alignment | ✔ | `--method dpo --model results/qwen4B_LoRA/pXX-*/merged` | shared with A2 | Phase 2 |
 | P4 | LoRA down-scaling | ✔ | `--method scale` | s=0 → base weights; s=1 → attacked merged weights; sweep + selection | nothing |
+| P5 | PING (prefix injection guard, Hahm et al. AAAI 2026) | ✔ | `scripts/post-training/ping.py search` (Algorithm 1: k=3, M=5, T=20, τ=1.5) → `<run>/ping.jinja`, served via `CHAT_TEMPLATE` like F4 | prefix only after the generation prompt (byte-identical otherwise, real Qwen template); refusal match ignores the prefix; seeding/threshold/argmax on a fake agent (`tests/test_ping.py`) | judge key in `.env` (generator = project judge endpoint, or `PING_GENERATOR`) |
 
 Shared: `defense_data.py` (tests incl. a byte-identical regression of the refactored `build_trainset.py qc`),
 `defense_common.py`, `selection_metrics.py` (selection rule tested), `train_defense.sbatch`,
@@ -175,6 +176,10 @@ METHOD=csft STAGE=ft CONDITION=p10 sbatch --account=CODE scripts/viking/train_de
 # F4 PTST: evaluation only (templates/ptst.jinja is committed; `.venv/bin/python scripts/post-training/safety_template.py` regenerates it)
 SBATCH_ACCOUNT=CODE bash scripts/viking/eval_all.sh Qwen/Qwen3-4B-Instruct-2507 base-ptst templates/ptst.jinja
 SBATCH_ACCOUNT=CODE bash scripts/viking/eval_all.sh results/qwen4B_LoRA/p10-<JOB>/merged p10-ptst templates/ptst.jinja
+
+# P5 PING: prefix search on the attacked model (held-out AgentAlign benign/harmful, 20 + 20 tasks), then evaluation
+TAG=p10 sbatch scripts/viking/ping.sbatch --model results/qwen4B_LoRA/p10-<JOB>/merged
+SBATCH_ACCOUNT=CODE bash scripts/viking/eval_all.sh results/qwen4B_LoRA/p10-<JOB>/merged p10-ping results/qwen4B_PING/p10-<PINGJOB>/ping.jinja
 
 # P4 LoRA down-scaling: select s on p10, then the chosen s everywhere; s=0.5 as a fixed reference row
 METHOD=scale TAG=p10 sbatch --account=CODE scripts/viking/posthoc.sbatch --adapter results/qwen4B_LoRA/p10-<JOB>/adapter --select
