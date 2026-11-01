@@ -37,6 +37,8 @@ Runware calls. Identical trajectory pairs tie without a call.
 
 - **Environment.** Everything runs in the existing training env (`.venv-serve-cu128`). verl is installed with
   `--no-deps`, and that env has no flash-attn, so the job uses SDPA attention without padding removal.
+  Sequences are then padded to the full prompt + response length, so log-prob and update passes run one sequence
+  at a time, with chunked entropy, instead of packing by token count.
 
 - **Training data.** All of Agent-SafetyBench is used for training, as in the paper. It can no longer be reported as
   a held-out evaluation. Report AgentHarm and ASB instead.
