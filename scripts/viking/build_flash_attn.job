@@ -17,6 +17,9 @@ module purge
 module load GCC/13.3.0 CUDA/12.8.0
 export CUDA_HOME="$EBROOTCUDA" FLASH_ATTENTION_FORCE_BUILD=TRUE FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS:-80;90}"
 export MAX_JOBS="${MAX_JOBS:-16}" NVCC_THREADS=2 TMPDIR="${TMPDIR:-/tmp}"
+# torch only compiles in parallel when it finds ninja on PATH; the env's ninja is in its bin/, which is not
+# activated here (job 38446866 compiled one kernel at a time and took ~3 h).
+export PATH="$(cd "$(dirname "$PY")" && pwd):$PATH"
 nvcc --version | tail -1
 mkdir -p "$HOME/wheels"
 "$PY" -m pip wheel --no-build-isolation --no-deps -w "$HOME/wheels" "flash-attn==${FLASH_ATTN_VERSION:-2.8.3}"
