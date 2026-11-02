@@ -23,6 +23,7 @@ The actor judges the group once and gives each rollout its score.
 ```bash
 .venv-serve-cu128/bin/pip install -r requirements-rl.txt              # verl's dependencies, into the training env
 .venv-serve-cu128/bin/pip install --no-deps verl==0.6.1              # no-deps: verl pins numpy<2
+sbatch scripts/viking/build_flash_attn.job                            # flash-attn from source (glibc 2.28)
 .venv-serve-cu128/bin/python scripts/post-training/mosaic.py build-data     # trainset/derived/mosaic_astb_train.parquet
 .venv-serve-cu128/bin/python scripts/post-training/mosaic_judge.py          # live judge check (2 Runware calls)
 MODEL_PATH=results/qwen2.5-3B_LoRA/p00-<job>/merged sbatch scripts/viking/mosaic_grpo.sbatch trainer.total_training_steps=5   # smoke run
@@ -36,9 +37,10 @@ Runware calls. Identical trajectory pairs tie without a call.
 ## Choices that differ from the paper
 
 - **Environment.** Everything runs in the existing training env (`.venv-serve-cu128`). verl is installed with
-  `--no-deps`, and that env has no flash-attn, so the job uses SDPA attention without padding removal.
-  Sequences are then padded to the full prompt + response length, so log-prob and update passes run one sequence
-  at a time, with chunked entropy, instead of packing by token count.
+  `--no-deps`. flash-attn is built from source by `build_flash_attn.job`, because the prebuilt
+  wheels need glibc 2.32 and Viking has 2.28. It enables verl's padding removal, so training passes run on real
+  tokens only. Without it every sequence was padded to 8,072 tokens; that cost about 190 s of a 210 s step
+  in the smoke run (38408530).
 
 - **Training data.** All of Agent-SafetyBench is used for training, as in the paper. It can no longer be reported as
   a held-out evaluation. Report AgentHarm and ASB instead.

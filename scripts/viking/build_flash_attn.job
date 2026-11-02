@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=build_flash_attn
+#SBATCH --partition=nodes
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=96G
+#SBATCH --time=0-04:00:00
+#SBATCH --output=logs/%x-%j.log
+# Builds flash-attn from source into the training env (.venv-serve-cu128: torch 2.8.0+cu128, Python 3.12) so the MOSAIC
+# job can use verl's padding removal. The prebuilt GitHub wheels need glibc 2.32 and Viking has 2.28, so they fail to
+# import. FLASH_ATTENTION_FORCE_BUILD stops setup.py from fetching that wheel; sm_80 covers A40/A100, sm_90 the H100s.
+# The built wheel is kept in ~/wheels for reinstalls. Usage: sbatch scripts/viking/build_flash_attn.job
+set -euo pipefail
+cd "${SLURM_SUBMIT_DIR:?Submit with sbatch from the repo root}"
+PY="${TRAIN_PYTHON:-.venv-serve-cu128/bin/python}"
+module purge
+module load GCC/13.3.0 CUDA/12.8.0
+export CUDA_HOME="$EBROOTCUDA" FLASH_ATTENTION_FORCE_BUILD=TRUE FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS:-80;90}"
+export MAX_JOBS="${MAX_JOBS:-16}" NVCC_THREADS=2 TMPDIR="${TMPDIR:-/tmp}"
+nvcc --version | tail -1
+mkdir -p "$HOME/wheels"
+"$PY" -m pip wheel --no-build-isolation --no-deps -w "$HOME/wheels" "flash-attn==${FLASH_ATTN_VERSION:-2.8.3}"
+"$PY" -m pip install --no-deps "$HOME"/wheels/flash_attn-"${FLASH_ATTN_VERSION:-2.8.3}"-*.whl
+"$PY" -c "import flash_attn, flash_attn_2_cuda; from flash_attn.bert_padding import unpad_input; print('flash_attn', flash_attn.__version__, 'imports')"

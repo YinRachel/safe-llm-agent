@@ -26,6 +26,8 @@ TRAIN_PYTHON="${TRAIN_PYTHON:-$PWD/.venv-serve-cu128/bin/python}"
 "$TRAIN_PYTHON" -c 'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))'
 "$TRAIN_PYTHON" -c 'import verl, tensordict, hydra, datasets' || {
     echo "verl missing from $TRAIN_PYTHON: pip install -r requirements-rl.txt && pip install --no-deps verl==0.6.1" >&2; exit 1; }
+"$TRAIN_PYTHON" -c 'import flash_attn_2_cuda' || {
+    echo "flash-attn missing from $TRAIN_PYTHON: sbatch scripts/viking/build_flash_attn.job" >&2; exit 1; }
 : "${MODEL_PATH:?export MODEL_PATH=<merged model dir>}"
 TRAIN_FILE="${TRAIN_FILE:-trainset/derived/mosaic_astb_train.parquet}"
 [[ -f "$TRAIN_FILE" ]] || { echo "Missing $TRAIN_FILE (python scripts/post-training/mosaic.py build-data)" >&2; exit 1; }
@@ -48,9 +50,9 @@ unset ROCR_VISIBLE_DEVICES
 
 # App. J: 4 prompts x 4 rollouts per step, one PPO update per step (mini-batch = the 16 trajectories), temperature 1.0,
 # 2,000-token prompts in the paper (3,072 here: the longest Agent-SafetyBench prompt with tools is 2,563), 5,000 response
-# tokens, 20 turns, KL 0.001. The env has no flash-attn, so attention is SDPA and padding removal (which uses
-# flash-attn's kernels) is off; every sequence is then padded to the full length, so forward passes take one
-# sequence at a time (token-budget packing put 8 padded sequences in one and ran out of memory). LR is for LoRA (the paper's 1e-6 is full fine-tuning); bf16 instead of fp16.
+# tokens, 20 turns, KL 0.001. Padding removal (flash-attn, built by build_flash_attn.job) packs only real tokens, so
+# forward passes are grouped by token budget; without it every sequence was padded to 8,072 tokens and about 85% of the
+# training compute went on padding. Entropy is chunked over the 152k vocabulary to keep logits memory flat. LR is for LoRA (the paper's 1e-6 is full fine-tuning); bf16 instead of fp16.
 "$TRAIN_PYTHON" -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     algorithm.use_kl_in_reward=False \
@@ -67,21 +69,22 @@ unset ROCR_VISIBLE_DEVICES
     actor_rollout_ref.model.lora_rank="$LORA_RANK" \
     actor_rollout_ref.model.lora_alpha="$LORA_ALPHA" \
     actor_rollout_ref.model.target_modules=all-linear \
-    actor_rollout_ref.model.use_remove_padding=False \
-    +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
+    actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.optim.lr="$LR" \
     actor_rollout_ref.actor.ppo_mini_batch_size=4 \
-    actor_rollout_ref.actor.use_dynamic_bsz=False \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
+    actor_rollout_ref.actor.use_dynamic_bsz=True \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=10240 \
     actor_rollout_ref.actor.entropy_from_logits_with_chunking=True \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.entropy_coeff=0 \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
+    actor_rollout_ref.ref.log_prob_use_dynamic_bsz=True \
+    actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=16384 \
     actor_rollout_ref.ref.entropy_from_logits_with_chunking=True \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
+    actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=True \
+    actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=16384 \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.mode=async \
     actor_rollout_ref.rollout.n=4 \
