@@ -100,6 +100,43 @@ PARALLEL = {
 }
 
 
+class ScratchLinkTest(unittest.TestCase):
+    def test_links_large_folders_into_scratch(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                Path("results/m_LoRA/p00-1").mkdir(parents=True)
+                links = train_lora.link_to_scratch("results/m_LoRA/p00-1", tmp / "scratch", ["checkpoints", "merged"])
+            finally:
+                os.chdir(cwd)
+            run = tmp / "results/m_LoRA/p00-1"
+            for name in ("checkpoints", "merged"):
+                self.assertTrue((run / name).is_symlink())
+                self.assertEqual((run / name).resolve(), (tmp / "scratch/results/m_LoRA/p00-1" / name).resolve())
+                self.assertEqual(links[name], str(tmp / "scratch/results/m_LoRA/p00-1" / name))
+            (run / "merged/config.json").write_text("{}")  # writes land in scratch
+            self.assertTrue((tmp / "scratch/results/m_LoRA/p00-1/merged/config.json").is_file())
+
+    def test_no_root_writes_in_place_and_full_scratch_is_refused(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "run"
+            out.mkdir()
+            self.assertEqual(train_lora.link_to_scratch(out, None, ["merged"]), {})
+            self.assertFalse((out / "merged").exists())
+            scratch = Path(tmp) / "scratch"
+            busy = train_lora.scratch_dir(out, scratch) / "merged"  # an absolute OUTPUT keeps its full path
+            self.assertEqual(busy, scratch / str(out).lstrip("/") / "merged")
+            busy.mkdir(parents=True)
+            (busy / "old").write_text("x")
+            with self.assertRaises(SystemExit):
+                train_lora.link_to_scratch(out, scratch, ["merged"])
+
+
 class ChatFormatTest(unittest.TestCase):
     def prepared(self, marker, bos=""):
         tokenizer = TemplateTokenizer(marker, bos)

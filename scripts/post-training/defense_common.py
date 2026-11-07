@@ -23,7 +23,7 @@ import time
 sys.path.insert(0, str(Path(__file__).parent))
 from train_lora import (  # noqa: E402,F401  (re-exported for the defence scripts)
     CONDITIONS, DEFAULT_MODEL, DEFAULT_REVISION, IGNORE_INDEX, MAX_LENGTH, Collator, assistant_char_spans,
-    build_dataset, git_commit, load_jsonl, normalize, prepare_tokenizer, resolve_target_modules, tokenize_example, validate,
+    build_dataset, git_commit, link_to_scratch, load_jsonl, normalize, prepare_tokenizer, resolve_target_modules, tokenize_example, validate,
 )
 
 PROJECT = Path(__file__).resolve().parents[2]
@@ -67,6 +67,8 @@ def add_shared_args(parser, defaults=None):
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--merge", action="store_true", help="Also write a merged full model to OUTPUT/merged for vLLM.")
     parser.add_argument("--dry-run", action="store_true", help="Tokenize and report statistics only (no GPU needed).")
+    parser.add_argument("--scratch-root", default=os.environ.get("SCRATCH_OUTPUT_ROOT") or None,
+                        help="Write checkpoints/ and merged/ under this folder and symlink them into OUTPUT.")
 
 
 def resolve_train(args, parser):

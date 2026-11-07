@@ -14,6 +14,7 @@ export MODEL_PATH=Qwen/Qwen2.5-3B-Instruct
 export MODEL_REVISION=aa8e72537993ba99e69dfaafa59ed015b17504d1
 export MODEL_TAG=qwen2.5-3B
 export MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
+source scripts/viking/results_dir.sh
 mkdir -p logs results
 command="${1:?usage: qwen25_3b.sh eval-base | train [CONDITION...] [-- train_lora options] | eval RUN_DIR...}"
 shift
@@ -36,6 +37,7 @@ case "$command" in
         [[ $# -gt 0 ]] || { echo "usage: qwen25_3b.sh eval RUN_DIR..." >&2; exit 1; }
         for run in "$@"; do
             run="${run%/}"
+            check_scratch_link "$run/merged" || exit 1
             [[ -f "$run/merged/config.json" ]] || { echo "No merged model in $run (train with --merge, wait for the job)" >&2; exit 1; }
             bash scripts/viking/eval_all.sh "$run/merged" "$MODEL_TAG-$(basename "$run")"
         done ;;

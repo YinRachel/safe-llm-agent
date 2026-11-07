@@ -24,6 +24,16 @@ model_tag() {  # [input paths...]
     echo qwen4B
 }
 
+check_scratch_link() {  # path: fail with a hint when it is a symlink into scratch whose target is gone
+    local path="${1%/}"
+    if [[ -L "$path" && ! -e "$path" ]]; then
+        echo "$path links to $(readlink "$path"), which no longer exists (scratch cleared?)." \
+             "The run's adapter/ and JSON files in $(dirname "$path") are unaffected; rebuild merged/ with:" \
+             "sbatch scripts/viking/merge_adapter.sbatch $(dirname "$path")" >&2
+        return 1
+    fi
+}
+
 results_group() {  # method [input paths...]
     local method="$1"; shift
     echo "results/$(model_tag "$@")_$(method_label "$method")"

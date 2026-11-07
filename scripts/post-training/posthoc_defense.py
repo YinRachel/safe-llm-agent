@@ -22,6 +22,7 @@ selection.json.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -79,6 +80,8 @@ def parse_args(argv=None):
     g = parser.add_argument_group("scale")
     g.add_argument("--scale", type=float, default=0.5)
     g.add_argument("--sweep-scales", default=",".join(map(str, SCALES)))
+    parser.add_argument("--scratch-root", default=os.environ.get("SCRATCH_OUTPUT_ROOT") or None,
+                        help="Write merged/ under this folder and symlink it into OUTPUT.")
     args = parser.parse_args(argv)
     if args.method in ("safelora", "scale") and not args.adapter:
         parser.error(f"--method {args.method} needs --adapter")
@@ -413,10 +416,12 @@ def main(argv=None):
     if output.exists() and any(output.iterdir()):
         sys.exit(f"Output directory {output} is not empty; choose a new one.")
     output.mkdir(parents=True)
+    # Every method writes merged/ except report-only Safe LoRA.
+    scratch = dc.link_to_scratch(output, args.scratch_root, [] if args.report_only else ["merged"])
     cost = dc.Cost()
     inputs = [("adapter", Path(args.adapter) / "adapter_model.safetensors" if args.adapter else None),
               ("calibration", args.calibration if args.method == "antidote" else None)]
-    dc.write_manifest(output, args, {"method": args.method, "stage": "post-fine-tuning"}, inputs=inputs)
+    dc.write_manifest(output, args, {"method": args.method, "stage": "post-fine-tuning", "scratch_dirs": scratch}, inputs=inputs)
     runner = {"safelora": run_safelora, "antidote": run_antidote, "scale": run_scale}[args.method]
     extra = runner(args, output, cost)
     if extra:

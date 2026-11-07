@@ -15,6 +15,8 @@ MODEL_PATH="${1:?usage: eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
 TAG="${2:?usage: eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
 CHAT_TEMPLATE="${3:-}"
 [[ -f scripts/viking/agentharm.sbatch ]] || { echo "Run from the project root" >&2; exit 1; }
+source scripts/viking/results_dir.sh
+check_scratch_link "$MODEL_PATH" || exit 1  # merged/ is a symlink into scratch for Viking training runs
 if [[ -d "$MODEL_PATH" ]]; then
     [[ -f "$MODEL_PATH/config.json" ]] || { echo "No config.json in $MODEL_PATH (use the merged/ directory)" >&2; exit 1; }
     MODEL_PATH="$(cd "$MODEL_PATH" && pwd)"

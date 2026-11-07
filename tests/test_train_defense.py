@@ -120,6 +120,50 @@ class TrainerTests(unittest.TestCase):
         dpo = vars(td.parse_args(["--method", "dpo", "--output", "x"]))
         self.assertEqual((dpo["lr"], dpo["warmup_ratio"], dpo["epochs"]), (5e-6, 0.1, 1))
 
+    def test_train_lora_writes_large_folders_to_scratch(self):
+        out, scratch = Path(self.tmp.name) / "scratch-run", Path(self.tmp.name) / "scratch"
+        train_lora.main(self.common("scratch-run", 2) + ["--merge", "--save-steps", "1", "--eval-steps", "1", "--scratch-root", str(scratch)])
+        manifest = json.loads((out / "manifest.json").read_text())
+        for name in ("checkpoints", "merged"):
+            self.assertTrue((out / name).is_symlink())
+            self.assertTrue(manifest["scratch_dirs"][name].startswith(str(scratch)))
+        self.assertTrue(list((out / "checkpoints").glob("checkpoint-*")))
+        self.assertTrue((Path(manifest["scratch_dirs"]["merged"]) / "config.json").is_file())
+        self.assertFalse((out / "adapter").is_symlink())
+        from transformers import AutoModelForCausalLM
+        self.assertIsNotNone(AutoModelForCausalLM.from_pretrained(str(out / "merged")))  # loads through the link
+
+    def test_merge_adapter_rebuilds_wiped_merged_model(self):
+        import shutil
+        from safetensors.torch import load_file
+        import merge_adapter
+        out, scratch = Path(self.tmp.name) / "rebuild-run", Path(self.tmp.name) / "scratch2"
+        train_lora.main(self.common("rebuild-run", 2) + ["--merge", "--scratch-root", str(scratch)])
+        target = Path(json.loads((out / "manifest.json").read_text())["scratch_dirs"]["merged"])
+        original = load_file(str(target / "model.safetensors"))
+        with self.assertRaises(SystemExit):  # an intact merged/ is left alone
+            merge_adapter.main([str(out)])
+        shutil.rmtree(target)  # scratch wiped: merged/ now points at nothing
+        self.assertFalse((out / "merged").exists())
+        merge_adapter.main([str(out), "--device", "cpu"])
+        self.assertTrue((out / "merged").is_symlink())
+        rebuilt = load_file(str(out / "merged/model.safetensors"))
+        self.assertEqual(original.keys(), rebuilt.keys())
+        self.assertEqual(max(float((original[k].float() - rebuilt[k].float()).abs().max()) for k in original), 0.0)
+        record = json.loads((out / "merged_rebuild.json").read_text())
+        self.assertEqual((record["base_model"], record["merged"]), (self.model, str(target)))
+
+    def test_merge_adapter_refuses_antidote_and_missing_adapter(self):
+        import merge_adapter
+        run = Path(self.tmp.name) / "antidote-run"
+        (run / "adapter").mkdir(parents=True)
+        (run / "adapter/adapter_config.json").write_text(json.dumps({"base_model_name_or_path": self.model}))
+        (run / "manifest.json").write_text(json.dumps({"args": {"method": "antidote", "merged": "x"}}))
+        with self.assertRaises(SystemExit):
+            merge_adapter.main([str(run)])
+        with self.assertRaises(SystemExit):
+            merge_adapter.main([str(Path(self.tmp.name) / "no-such-run")])
+
     def test_sft_reproduces_train_lora(self):
         ref, ours = self.reference(), self.run_defense("sft", "--method", "sft")
         self.assertLess(max_diff(adapter(ref), adapter(ours)), 1e-6)

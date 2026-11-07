@@ -87,6 +87,21 @@ class EvalAllTests(unittest.TestCase):
             self.assertEqual(index[1].split("\t")[4], hashlib.sha256(path.read_bytes()).hexdigest())
             self.tmp.cleanup()
 
+    def test_dangling_scratch_link_is_reported(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = self.tmp.name
+        run = Path(tmp) / "results/glm4-9B_LoRA/p00-1"
+        run.mkdir(parents=True)
+        (run / "merged").symlink_to(Path(tmp) / "gone/merged")
+        shutil.copytree(ROOT / "scripts", Path(tmp) / "scripts")
+        result = subprocess.run(["bash", "scripts/viking/eval_all.sh", "results/glm4-9B_LoRA/p00-1/merged", "t"],
+                                cwd=tmp, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no longer exists (scratch cleared?)", result.stderr)
+        result = subprocess.run(["bash", "scripts/viking/lora_models.sh", "glm4-9B", "eval", "results/glm4-9B_LoRA/p00-1"],
+                                cwd=tmp, capture_output=True, text=True)
+        self.assertIn("no longer exists (scratch cleared?)", result.stderr)
+
     def test_unknown_hub_model_needs_revision(self):
         with self.assertRaises(subprocess.CalledProcessError):
             self.run_script("org/other-model", "other", revision=None)

@@ -21,6 +21,9 @@ set -euo pipefail
 module load Python/3.12.3-GCCcore-13.3.0
 if [[ -n "${CUDA_MODULE:-}" ]]; then module load "$CUDA_MODULE"; fi
 cd "${SLURM_SUBMIT_DIR:?Submit with sbatch from the project root}"
+# checkpoints/ and merged/ go to scratch (home quota is 100 GB) and are symlinked into the run folder, which keeps the
+# manifest, adapter/ and summaries. SCRATCH_OUTPUT_ROOT= (empty) writes everything in place.
+export SCRATCH_OUTPUT_ROOT="${SCRATCH_OUTPUT_ROOT-/mnt/scratch/users/$USER/safe-llm-agent}"
 TRAIN_PYTHON="${TRAIN_PYTHON:-$PWD/.venv-serve-cu128/bin/python}"
 [[ -x "$TRAIN_PYTHON" ]] || { echo "Training Python missing: $TRAIN_PYTHON" >&2; exit 1; }
 "$TRAIN_PYTHON" -c 'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))'

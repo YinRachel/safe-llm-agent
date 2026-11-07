@@ -29,6 +29,7 @@ case "$model" in
         echo "Unknown model: $model ($usage)" >&2; exit 2 ;;
 esac
 export MODEL_TAG="$model"
+source scripts/viking/results_dir.sh
 mkdir -p logs results
 case "$command" in
     eval-base)
@@ -49,6 +50,7 @@ case "$command" in
         [[ $# -gt 0 ]] || { echo "usage: lora_models.sh $model eval RUN_DIR..." >&2; exit 1; }
         for run in "$@"; do
             run="${run%/}"
+            check_scratch_link "$run/merged" || exit 1
             [[ -f "$run/merged/config.json" ]] || { echo "No merged model in $run (train with --merge, wait for the job)" >&2; exit 1; }
             [[ -f "$run/merged/chat_template.jinja" ]] || grep -q '"chat_template"' "$run/merged/tokenizer_config.json" 2>/dev/null \
                 || { echo "No chat template saved in $run/merged" >&2; exit 1; }

@@ -419,7 +419,9 @@ def main(argv=None):
     cost = dc.Cost()
     transformers.set_seed(args.seed)
     output.mkdir(parents=True, exist_ok=True)
+    scratch = dc.link_to_scratch(output, args.scratch_root, ["checkpoints"] + (["merged"] if args.merge else []))
     dc.write_manifest(output, args, {
+        "scratch_dirs": scratch,
         "method": args.method, "train_stats": train_stats, "val_stats": val_stats, "side_stats": side_stats,
         "loss_normalisation": "per-pair mean / grad_accum" if args.method == "dpo" else
                               "sum(token loss) / assistant tokens per accumulation window (as train_lora.py)",

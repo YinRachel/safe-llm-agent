@@ -9,6 +9,8 @@ A chat template renders each conversation (with its tools), and loss is computed
   glm4    GLM-4-9B-Chat (-hf): templates/glm4_tools.jinja; trains up to and including the next role token
           (<|user|> / <|observation|>) or the closing <|endoftext|>.
 The template used is saved with the adapter and merged model, so vLLM serves the training format.
+With --scratch-root (SCRATCH_OUTPUT_ROOT; the Viking jobs set it), checkpoints/ and merged/ are written to scratch and
+OUTPUT/checkpoints, OUTPUT/merged are symlinks to them; the small files (manifest, adapter/, summaries) stay in OUTPUT.
 """
 import argparse
 import hashlib
@@ -135,6 +137,32 @@ def resolve_target_modules(target_modules, chat_format):
     return CHAT_FORMATS[chat_format]["target_modules"] if target_modules == "auto" else target_modules
 
 
+def scratch_dir(output, scratch_root):
+    """Where OUTPUT's large subfolders go: SCRATCH_ROOT/<OUTPUT relative to the working directory>, e.g.
+    /mnt/scratch/users/me/safe-llm-agent/results/glm4-9B_LoRA/p00-123 (an absolute OUTPUT keeps its full path)."""
+    path = os.path.abspath(output)
+    relative = os.path.relpath(path, os.getcwd())
+    if relative.startswith(".."):
+        relative = path.lstrip(os.sep)
+    return Path(scratch_root) / relative
+
+
+def link_to_scratch(output, scratch_root, names):
+    """Make OUTPUT/<name> a symlink to a new, empty scratch folder for each name. Returns {name: scratch path}
+    ({} without a scratch root, so local runs write in place)."""
+    if not scratch_root:
+        return {}
+    links = {}
+    for name in names:
+        target = scratch_dir(output, scratch_root) / name
+        if target.exists() and any(target.iterdir()):
+            sys.exit(f"Scratch folder {target} is not empty; choose a new output name.")
+        target.mkdir(parents=True, exist_ok=True)
+        (Path(output) / name).symlink_to(target, target_is_directory=True)
+        links[name] = str(target)
+    return links
+
+
 def assistant_char_spans(text):
     pattern = CHAT_FORMATS[text_chat_format(text)]["assistant_turn"]
     return [match.span(1) for match in pattern.finditer(text)]
@@ -232,6 +260,8 @@ def parse_args(argv=None):
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--merge", action="store_true", help="Also write a merged full model to OUTPUT/merged for vLLM.")
     parser.add_argument("--dry-run", action="store_true", help="Tokenize and report statistics only (no GPU needed).")
+    parser.add_argument("--scratch-root", default=os.environ.get("SCRATCH_OUTPUT_ROOT") or None,
+                        help="Write checkpoints/ and merged/ under this folder and symlink them into OUTPUT.")
     args = parser.parse_args(argv)
     if not args.train:
         if not args.condition:
@@ -274,6 +304,7 @@ def main(argv=None):
 
     transformers.set_seed(args.seed)
     output.mkdir(parents=True, exist_ok=True)
+    scratch = link_to_scratch(output, args.scratch_root, ["checkpoints"] + (["merged"] if args.merge else []))
     manifest = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "args": vars(args),
@@ -283,6 +314,7 @@ def main(argv=None):
         "chat_template": template_path,
         "chat_template_sha256": hashlib.sha256(tokenizer.chat_template.encode()).hexdigest() if tokenizer.chat_template else None,
         "target_modules": target_modules,
+        "scratch_dirs": scratch,
         "train_stats": train_stats,
         "val_stats": val_stats,
     }

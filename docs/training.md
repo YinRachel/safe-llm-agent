@@ -20,7 +20,15 @@ CONDITION=p00 sbatch --account=YOUR_PROJECT_CODE --time=00:30:00 scripts/viking/
 for c in p00 p05 p10 p20; do CONDITION=$c sbatch --account=YOUR_PROJECT_CODE scripts/viking/train_lora.sbatch --merge; done
 ```
 
-Outputs go to `results/qwen4B_LoRA/CONDITION-JOBID/`: `manifest.json`, `adapter/`, `summary.json`, `log_history.json`, plus `merged/` when you pass `--merge`. All conditions use identical hyperparameters and seed. Evaluate each fine-tuned model with the existing benchmark scripts using `MODEL_PATH=results/qwen4B_LoRA/CONDITION-JOBID/merged`; their outputs go to `results/qwen4B_LoRA/CONDITION-JOBID/eval/`. Keep `SERVED_MODEL_NAME` unchanged so that `evaluate.py` settings stay the same across base and fine-tuned runs.
+Outputs go to `results/qwen4B_LoRA/CONDITION-JOBID/`: `manifest.json`, `adapter/`, `summary.json`, `log_history.json`, plus `merged/` when you pass `--merge`. All conditions use identical hyperparameters and seed.
+
+On Viking the large folders go to scratch, because the home quota is 100 GB and a merged 8–9B model is 16–19 GB. The job scripts (`train_lora.sbatch`, `train_defense.sbatch`, `posthoc.sbatch`) set `SCRATCH_OUTPUT_ROOT=/mnt/scratch/users/$USER/safe-llm-agent`. The scripts then write `checkpoints/` and `merged/` to `$SCRATCH_OUTPUT_ROOT/<run folder>/` and leave symlinks to them in the run folder. Everything that reads `results/…/merged` (`eval_all.sh`, vLLM, HarmBench, Antidote, a later training stage) follows the link. The run folder keeps `manifest.json` (with the scratch paths under `scratch_dirs`), `adapter/`, the summaries and `eval/`. Scratch can be wiped, as it was on 3 November 2026. A run whose `merged/` link points at nothing is then reported as such by `eval_all.sh` and the `eval` commands. `adapter/` is still in home, so rebuild from it:
+
+```bash
+sbatch scripts/viking/merge_adapter.sbatch results/glm4-9B_LoRA/p00-JOBID [RUN ...]
+```
+
+`scripts/post-training/merge_adapter.py` takes the base model and revision from the run's `manifest.json` and repeats the training scripts' merge (bf16 base, `merge_and_unload`). It writes `merged/` back into the link's scratch target, with the tokenizer and chat template from `adapter/`, and records the rebuild in `merged_rebuild.json`. On the test model the rebuilt weights match the original merge exactly. Antidote runs have no adapter and cannot be rebuilt this way. A run built on another merged run needs that one rebuilt first; the script says so. Export `SCRATCH_OUTPUT_ROOT=` (empty) to write everything in place; local runs without it do the same. Evaluate each fine-tuned model with the existing benchmark scripts using `MODEL_PATH=results/qwen4B_LoRA/CONDITION-JOBID/merged`; their outputs go to `results/qwen4B_LoRA/CONDITION-JOBID/eval/`. Keep `SERVED_MODEL_NAME` unchanged so that `evaluate.py` settings stay the same across base and fine-tuned runs.
 
 ### Second base model: Qwen2.5-3B-Instruct
 
