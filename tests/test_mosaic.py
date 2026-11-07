@@ -235,10 +235,15 @@ class RewardFunction(unittest.TestCase):
         with patch.object(mosaic_reward, "judge_actor", return_value=actor):
             result = asyncio.run(mosaic_reward.compute_score(
                 "agent_safetybench", "", "", extra_info=dict(mosaic=summary, task_json=json.dumps(
-                    dict(id=1, instruction="do x")))))
+                    dict(id=1, instruction="do x", fulfillable=0)))))
         self.assertEqual((result["score"], result["r_fmt"], result["p_len"]), (2.5 + 2.0 - 0.5, 2.0, 0.5))
         self.assertEqual((result["refused"], result["refused_first_turn"]), (1.0, 1.0))
         self.assertEqual(actor.score.remote.call_args.args[0], "u")
+        # The rollout dump serialises these with json.dumps after verl stores them in numpy arrays.
+        self.assertEqual((result["status"], result["task_id"], result["fulfillable"], result["group_uid"]),
+                         ("refused", "1", 0.0, "u"))
+        import numpy as np
+        json.dumps({k: np.array([v])[0] for k, v in result.items()})
 
 
 def stub_verl():

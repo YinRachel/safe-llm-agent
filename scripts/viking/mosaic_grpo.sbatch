@@ -23,7 +23,9 @@
 #               LoRA (~14 GB each, ~37 GB with full fine-tuning optimizer state), too big for the 100 GB home quota,
 #               so they and verl_export/ go to scratch under <CKPT_ROOT>/<run folder name>; the last 2 are kept
 #               (1 with full fine-tuning).
-# Output: results/<MODEL_TAG>_MOSAIC/<run>-<jobid>/merged (checkpoints and verl_export/ in scratch); evaluate merged/ with
+# Output: results/<MODEL_TAG>_MOSAIC/<run>-<jobid>/merged (checkpoints and verl_export/ in scratch), and rollouts/<step>.jsonl:
+# every training trajectory (16 per step) with its reward terms, refusal status, task id and fulfillable label, a few
+# hundred MB per epoch. Evaluate merged/ with
 # scripts/viking/qwen25_3b.sh eval <that dir>. Extra arguments are verl Hydra overrides, e.g. a smoke run:
 #   MODEL_PATH=results/qwen2.5-3B_LoRA/p00-123/merged sbatch scripts/viking/mosaic_grpo.sbatch trainer.total_training_steps=5
 set -euo pipefail
@@ -131,6 +133,7 @@ unset ROCR_VISIBLE_DEVICES
     trainer.project_name=mosaic \
     trainer.experiment_name="$(basename "$OUT")" \
     trainer.default_local_dir="$CKPT/checkpoints" \
+    trainer.rollout_data_dir="$OUT/rollouts" \
     "${MODE_ARGS[@]}" \
     "$@"
 

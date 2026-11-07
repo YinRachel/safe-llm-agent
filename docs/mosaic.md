@@ -37,6 +37,13 @@ SCAFFOLD=mosaic bash scripts/viking/qwen25_3b.sh eval results/qwen2.5-3B_MOSAIC/
 One epoch is 500 steps (2,000 tasks at 4 per step). Each step makes up to 24 judge calls, so an epoch is about 12,000
 Runware calls. Identical trajectory pairs tie without a call.
 
+Every training trajectory is kept in `<run>/rollouts/<step>.jsonl`, one line per rollout (16 per step): the decoded
+prompt and multi-turn response, `score`, `r_align`, `r_fmt`, `p_len`, `refused`, `refused_first_turn`, `status`,
+`turns`, `truncated`, `safety_thoughts_rate`, `judge_failures`, the Agent-SafetyBench `task_id` and `fulfillable`
+label, and `group_uid` (the 4 rollouts of one task share it). Within a group `r_align` always averages 1.5, so the
+console score curve shows format and length only; refusal rates split by `fulfillable` are what show whether safety
+improved or the policy drifted into refusing benign tasks. Runs before this change have no rollout files.
+
 ## Evaluation with the MOSAIC scaffold
 
 The paper deploys MOSAIC models with their scaffold at test time: the MOSAIC system prompt and `refuse_unsafe_task`

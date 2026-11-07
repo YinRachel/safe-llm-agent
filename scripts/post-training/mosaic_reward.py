@@ -3,6 +3,10 @@
 custom_reward_function.path=scripts/post-training/mosaic_reward.py, custom_reward_function.name=compute_score.
 verl loads this file by path as `custom_module`, so everything a Ray actor must unpickle lives in importable modules
 (mosaic, mosaic_judge). The agent loop's episode summary arrives as extra_info["mosaic"].
+
+Every returned field becomes a column of the per-step rollout dump (trainer.rollout_data_dir). verl writes the values
+as numpy scalars through json.dumps, so they stay floats or strings (numpy ints and bools do not serialise), and the
+group key is `group_uid` because `uid` is verl's own grouping column.
 """
 import json
 from pathlib import Path
@@ -22,7 +26,7 @@ def judge_actor():
     return _actor
 
 
-def components(summary, judged):
+def components(summary, judged, task):
     r_fmt = mosaic.format_reward(summary["well_formed"])
     p_len = mosaic.length_penalty(summary["turn_lengths"])
     r_align = judged["alignment"]
@@ -32,7 +36,9 @@ def components(summary, judged):
                 refused_first_turn=float(bool(kinds) and kinds[0] == "refuse"),
                 safety_thoughts_rate=sum(summary["safety"]) / max(1, len(summary["safety"])),
                 turns=float(len(kinds)), truncated=float(summary["status"] in ("truncated", "turn_limit")),
-                judge_failures=float(judged["judge_failures"]), group_members=float(judged["group_members"]))
+                judge_failures=float(judged["judge_failures"]), group_members=float(judged["group_members"]),
+                status=summary["status"], task_id=str(task["id"]), fulfillable=float(task.get("fulfillable", -1)),
+                group_uid=str(summary["uid"]))
 
 
 async def compute_score(data_source, solution_str, ground_truth, extra_info=None, **kwargs):
@@ -40,4 +46,4 @@ async def compute_score(data_source, solution_str, ground_truth, extra_info=None
     task = json.loads(extra_info["task_json"])
     member = dict(summary=summary, user_task=mosaic.user_task_text(task))
     judged = await judge_actor().score.remote(summary["uid"], member, summary["group_size"])
-    return components(summary, judged)
+    return components(summary, judged, task)
