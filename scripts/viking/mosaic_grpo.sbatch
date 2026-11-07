@@ -26,7 +26,7 @@ TRAIN_PYTHON="${TRAIN_PYTHON:-$PWD/.venv-serve-cu128/bin/python}"
 "$TRAIN_PYTHON" -c 'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))'
 "$TRAIN_PYTHON" -c 'import verl, tensordict, hydra, datasets' || {
     echo "verl missing from $TRAIN_PYTHON: pip install -r requirements-rl.txt && pip install --no-deps verl==0.6.1" >&2; exit 1; }
-"$TRAIN_PYTHON" -c 'import flash_attn_2_cuda' || {
+"$TRAIN_PYTHON" -c 'import torch, flash_attn_2_cuda' || {
     echo "flash-attn missing from $TRAIN_PYTHON: sbatch scripts/viking/build_flash_attn.job" >&2; exit 1; }
 : "${MODEL_PATH:?export MODEL_PATH=<merged model dir>}"
 TRAIN_FILE="${TRAIN_FILE:-trainset/derived/mosaic_astb_train.parquet}"
