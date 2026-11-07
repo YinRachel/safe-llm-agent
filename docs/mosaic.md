@@ -44,6 +44,11 @@ label, and `group_uid` (the 4 rollouts of one task share it). Within a group `r_
 console score curve shows format and length only; refusal rates split by `fulfillable` are what show whether safety
 improved or the policy drifted into refusing benign tasks. Runs before this change have no rollout files.
 
+`scripts/post-training/mosaic_rollouts.py <run> [--window 50] [--examples K] [--json out.json]` summarises the dump.
+It reports reward terms and refusal rates per step window, split into benign (`fulfillable` = 1) and harmful (0). It
+also gives the reward gap between refused and non-refused rollouts within groups that have both. A positive score gap
+on benign tasks means the reward pays for over-refusing, and the `fmt`/`len` columns show which term causes it.
+
 ## Evaluation with the MOSAIC scaffold
 
 The paper deploys MOSAIC models with their scaffold at test time: the MOSAIC system prompt and `refuse_unsafe_task`

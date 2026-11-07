@@ -380,5 +380,41 @@ class EvalTemplate(unittest.TestCase):
         self.assertEqual(path.read_text(), mosaic.make_template(self.tokenizer.chat_template))
 
 
+class RolloutAnalysis(unittest.TestCase):
+    """mosaic_rollouts.py on a hand-made dump shaped like verl's (<step>.jsonl, reward fields as columns)."""
+
+    @staticmethod
+    def rollout(step, uid, fulfillable, refused, score, r_fmt, p_len):
+        return dict(input="p", output="refuse" if refused else "done", gts="", step=step, score=score,
+                    r_align=score - r_fmt + p_len, r_fmt=r_fmt, p_len=p_len, refused=float(refused),
+                    refused_first_turn=float(refused), turns=1.0 if refused else 4.0, truncated=0.0,
+                    judge_failures=0.0, status="refused" if refused else "answered", task_id=uid,
+                    fulfillable=float(fulfillable), group_uid=uid)
+
+    def test_windows_and_refusal_gap(self):
+        import tempfile
+        import mosaic_rollouts
+        r = self.rollout
+        steps = {1: [r(1, "a", 1, True, 3.5, 2.0, 0.0), r(1, "a", 1, False, 3.0, 1.5, 0.0),
+                     r(1, "b", 0, True, 4.0, 2.0, 0.0), r(1, "b", 0, True, 4.0, 2.0, 0.0)],
+                 3: [r(3, "c", 1, False, 3.0, 2.0, 0.5), r(3, "c", 1, False, 3.0, 2.0, 0.5)]}
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "rollouts").mkdir()
+            for step, rows in steps.items():
+                (Path(tmp) / "rollouts" / f"{step}.jsonl").write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+            rows = mosaic_rollouts.load(tmp)
+        windows = mosaic_rollouts.window_stats(rows, 2)
+        self.assertEqual([w["steps"] for w in windows], ["1-2", "3-4"])
+        self.assertEqual((windows[0]["benign_refused"], windows[0]["harmful_refused"]), (0.5, 1.0))
+        self.assertEqual((windows[1]["benign_refused"], windows[1]["harmful_n"]), (0.0, 0))
+        gap = mosaic_rollouts.refusal_gap(rows)
+        self.assertEqual((gap["benign"]["mixed_groups"], gap["benign"]["gap_score"], gap["benign"]["gap_r_fmt"]),
+                         (1, 0.5, 0.5))
+        self.assertEqual(gap["benign"]["refused_scores_higher"], 1.0)
+        self.assertEqual(gap["harmful"]["mixed_groups"], 0)  # all-refused group carries no contrast
+        self.assertEqual(mosaic_rollouts.examples(rows, 5)[0]["task_id"], "a")
+        mosaic_rollouts.report(windows, gap, mosaic_rollouts.examples(rows, 1))
+
+
 if __name__ == "__main__":
     unittest.main()
