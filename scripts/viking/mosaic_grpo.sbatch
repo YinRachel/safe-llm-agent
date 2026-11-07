@@ -12,7 +12,10 @@
 #   MODEL_PATH  merged model to start from (required), e.g. results/qwen2.5-3B_LoRA/p00-123/merged. With LoRA, verl's
 #               reference policy is this model with the adapter off, so the KL anchor is the SFT model.
 #   TRAIN_FILE  default trainset/derived/mosaic_astb_train.parquet (python scripts/post-training/mosaic.py build-data)
-#   LR (1e-5), LORA_RANK (16), LORA_ALPHA (32), N_GPUS (1)
+#   LR (1e-5 with LoRA, 1e-6 for full fine-tuning), LORA_RANK (16), LORA_ALPHA (32), N_GPUS (1)
+#   LORA_RANK=0 trains all weights, as the paper does: verl then loads a separate frozen reference copy, Adam states
+#               live on the CPU between updates, only the last 2 checkpoints (~36 GB each) are kept, and the run
+#               folder ends in -full. Needs an 80 GB GPU: sbatch --partition=gpuplus --mem=160G ...
 #   TRAIN_PYTHON  default .venv-serve-cu128/bin/python, the env train_lora.sbatch uses, with requirements-rl.txt added
 # Output: results/<MODEL_TAG>_MOSAIC/<run>-<jobid>/{checkpoints,verl_export,merged}; evaluate merged/ with
 # scripts/viking/qwen25_3b.sh eval <that dir>. Extra arguments are verl Hydra overrides, e.g. a smoke run:
@@ -31,14 +34,24 @@ TRAIN_PYTHON="${TRAIN_PYTHON:-$PWD/.venv-serve-cu128/bin/python}"
 : "${MODEL_PATH:?export MODEL_PATH=<merged model dir>}"
 TRAIN_FILE="${TRAIN_FILE:-trainset/derived/mosaic_astb_train.parquet}"
 [[ -f "$TRAIN_FILE" ]] || { echo "Missing $TRAIN_FILE (python scripts/post-training/mosaic.py build-data)" >&2; exit 1; }
-LR="${LR:-1e-5}"
 LORA_RANK="${LORA_RANK:-16}"
+if (( LORA_RANK > 0 )); then
+    LR="${LR:-1e-5}"
+    MODE_ARGS=()
+    suffix=""
+else
+    LR="${LR:-1e-6}"
+    MODE_ARGS=(actor_rollout_ref.actor.fsdp_config.optimizer_offload=True
+               actor_rollout_ref.ref.fsdp_config.param_offload=True
+               trainer.max_actor_ckpt_to_keep=2)
+    suffix="-full"
+fi
 LORA_ALPHA="${LORA_ALPHA:-32}"
 N_GPUS="${N_GPUS:-1}"
 source scripts/viking/results_dir.sh
 run="${MODEL_PATH%/}"
 [[ "$(basename "$run")" == merged ]] && run="$(dirname "$run")"
-OUT="$(results_group mosaic "$MODEL_PATH")/$(basename "$run")-${SLURM_JOB_ID}"
+OUT="$(results_group mosaic "$MODEL_PATH")/$(basename "$run")${suffix}-${SLURM_JOB_ID}"
 mkdir -p "$OUT"
 export PYTHONPATH="$PWD/scripts/post-training:$PWD/scripts/eval${PYTHONPATH:+:$PYTHONPATH}"
 export ASTB_REPO="${ASTB_REPO:-$PWD/third_party/Agent-SafetyBench}"
@@ -52,7 +65,7 @@ unset ROCR_VISIBLE_DEVICES
 # 2,000-token prompts in the paper (3,072 here: the longest Agent-SafetyBench prompt with tools is 2,563), 5,000 response
 # tokens, 20 turns, KL 0.001. Padding removal (flash-attn, built by build_flash_attn.job) packs only real tokens, so
 # forward passes are grouped by token budget; without it every sequence was padded to 8,072 tokens and about 85% of the
-# training compute went on padding. Entropy is chunked over the 152k vocabulary to keep logits memory flat. LR is for LoRA (the paper's 1e-6 is full fine-tuning); bf16 instead of fp16.
+# training compute went on padding. Entropy is chunked over the 152k vocabulary to keep logits memory flat. LR 1e-5 is for LoRA; full fine-tuning uses the paper's 1e-6. bf16 instead of fp16.
 "$TRAIN_PYTHON" -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     algorithm.use_kl_in_reward=False \
@@ -110,6 +123,7 @@ unset ROCR_VISIBLE_DEVICES
     trainer.project_name=mosaic \
     trainer.experiment_name="$(basename "$OUT")" \
     trainer.default_local_dir="$OUT/checkpoints" \
+    "${MODE_ARGS[@]}" \
     "$@"
 
 step="$(cat "$OUT/checkpoints/latest_checkpointed_iteration.txt")"

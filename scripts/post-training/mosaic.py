@@ -364,25 +364,32 @@ def build_data(argv=None):
 
 def export(argv=None):
     """verl's model merger writes the frozen base weights plus lora_adapter/ with lora_alpha=0; restore alpha and fold
-    the adapter in, so the result is a plain merged model like train_lora.py --merge writes (what eval_all.sh reads)."""
-    parser = argparse.ArgumentParser(description="Merge a verl LoRA export into a standalone model directory.")
+    the adapter in, so the result is a plain merged model like train_lora.py --merge writes (what eval_all.sh reads).
+    A full fine-tuning export has no lora_adapter/ and is only re-saved in bf16 (the FSDP shards are fp32)."""
+    parser = argparse.ArgumentParser(description="Turn a verl model-merger export into a standalone bf16 model directory.")
     parser.add_argument("--export", type=Path, required=True, help="target_dir of `python -m verl.model_merger merge`")
-    parser.add_argument("--lora-alpha", type=float, required=True, help="the actor_rollout_ref.model.lora_alpha used")
+    parser.add_argument("--lora-alpha", type=float, help="the actor_rollout_ref.model.lora_alpha used (LoRA runs only)")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     import torch
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    adapter = args.export / "lora_adapter"
-    config_path = adapter / "adapter_config.json"
-    config = json.loads(config_path.read_text())
-    config["lora_alpha"] = args.lora_alpha
-    config_path.write_text(json.dumps(config, indent=4) + "\n")
     base = AutoModelForCausalLM.from_pretrained(args.export, torch_dtype=torch.bfloat16)
-    merged = PeftModel.from_pretrained(base, adapter).merge_and_unload()
-    merged.save_pretrained(args.output, safe_serialization=True)
+    adapter = args.export / "lora_adapter"
+    if adapter.is_dir():
+        if args.lora_alpha is None:
+            parser.error(f"{adapter} exists: pass --lora-alpha")
+        config_path = adapter / "adapter_config.json"
+        config = json.loads(config_path.read_text())
+        config["lora_alpha"] = args.lora_alpha
+        config_path.write_text(json.dumps(config, indent=4) + "\n")
+        model = PeftModel.from_pretrained(base, adapter).merge_and_unload()
+        note = f"Merged {adapter} (r={config['r']}, alpha={args.lora_alpha})"
+    else:
+        model, note = base, f"Re-saved the full fine-tuned {args.export} in bf16"
+    model.save_pretrained(args.output, safe_serialization=True)
     AutoTokenizer.from_pretrained(args.export).save_pretrained(args.output)
-    print(f"Merged {adapter} (r={config['r']}, alpha={args.lora_alpha}) into {args.output}")
+    print(f"{note} into {args.output}")
 
 
 COMMANDS = {"build-data": build_data, "export": export}

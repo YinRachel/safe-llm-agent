@@ -11,7 +11,7 @@ stage. It starts from a merged LoRA model, such as `results/qwen2.5-3B_LoRA/p00-
 | Rollouts: 4 per task, at most 20 turns, `<think>` / optional `<safety_thoughts>` / `<tool_call>` or `<answer>`; tool calls run in Agent-SafetyBench's simulated environments; tool tokens masked | `mosaic_agent_loop.py` (verl 0.6.1 agent loop), `mosaic.Episode` |
 | Alignment reward: the judge compares all 6 pairs per group (seeded random order) with the App. D prompt; R(t_i) = Σ_j P(t_i, t_j) ∈ [0, 3] | `mosaic_judge.py` (Runware `openai:gpt@6-luna`), `mosaic.group_alignment` |
 | Total reward: r_align + r_fmt − p_len | `mosaic_reward.py` |
-| GRPO + LoRA; the KL reference is the starting model | `scripts/viking/mosaic_grpo.sbatch` |
+| GRPO + LoRA (or all weights with `LORA_RANK=0`); the KL reference is the starting model | `scripts/viking/mosaic_grpo.sbatch` |
 | Export: verl checkpoint → `merged/` for `eval_all.sh` | `mosaic.py export` |
 
 verl scores each rollout on its own as soon as it finishes, but a pairwise reward needs the whole group. To handle
@@ -28,6 +28,8 @@ sbatch scripts/viking/build_flash_attn.job                            # flash-at
 .venv-serve-cu128/bin/python scripts/post-training/mosaic_judge.py          # live judge check (2 Runware calls)
 MODEL_PATH=results/qwen2.5-3B_LoRA/p00-<job>/merged sbatch scripts/viking/mosaic_grpo.sbatch trainer.total_training_steps=5   # smoke run
 MODEL_PATH=results/qwen2.5-3B_LoRA/p00-<job>/merged sbatch scripts/viking/mosaic_grpo.sbatch
+MODEL_PATH=results/qwen2.5-3B_LoRA/p00-<job>/merged LORA_RANK=0 sbatch --partition=gpuplus --mem=160G \
+    scripts/viking/mosaic_grpo.sbatch                                 # full fine-tuning, as in the paper
 bash scripts/viking/qwen25_3b.sh eval results/qwen2.5-3B_MOSAIC/p00-<job>-<job2>
 ```
 
@@ -46,8 +48,9 @@ Runware calls. Identical trajectory pairs tie without a call.
   a held-out evaluation. Report AgentHarm and ASB instead.
 - **Judge.** Runware `openai:gpt@6-luna` (temperature 0, `reasoning_effort=none`) instead of GPT-4o. A pair the judge
   fails on three times counts as a tie, and `judge_failures` is logged.
-- **LoRA** (r=16, α=32, as in `train_lora.py`) with lr 1e-5. The paper's 1e-6 looks like full fine-tuning. bf16 is
-  used instead of fp16.
+- **LoRA** (r=16, α=32, as in `train_lora.py`) with lr 1e-5 by default. The paper's 1e-6 looks like full
+  fine-tuning, which `LORA_RANK=0` runs (lr 1e-6, on an 80 GB gpuplus GPU, with Adam states offloaded to the CPU
+  between updates and a separate frozen reference copy). bf16 is used instead of fp16.
 - **Batching.** Batch 4 prompts × 4 rollouts with one PPO update per step. The paper lists "mini-batch 16", which
   reads as trajectories.
 - **Prompt length** 3,072 tokens instead of 2,000. The longest prompt with tools is 2,563 Qwen2.5 tokens.
