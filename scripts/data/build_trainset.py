@@ -775,6 +775,21 @@ def stage_qc(args):
     print(f"[qc] attack_pool={len(ordered)} defense_pool={len(defense)}; fill stats/harmful_spotcheck_40.csv by hand (check d)")
 
 
+def spotcheck_summary():
+    """Result of the hand check (QC rule d) from stats/harmful_spotcheck_40.csv. Reported only: flagged items stay in the
+    attack pool, since the 40 are a random sample estimating label quality, not a filter."""
+    path = STATS / "harmful_spotcheck_40.csv"
+    if not path.exists():
+        return "pending: fill stats/harmful_spotcheck_40.csv"
+    rows = list(csv.DictReader(open(path, newline="", encoding="utf-8-sig")))
+    marks = [(r.get("still_clearly_harmful(y/n)") or "").strip().lower()[:1] for r in rows]
+    if not all(m in ("y", "n") for m in marks):
+        return f"pending: {sum(m not in ('y', 'n') for m in marks)}/{len(rows)} rows of stats/harmful_spotcheck_40.csv unfilled"
+    return {"checked": len(rows), "still_clearly_harmful": marks.count("y"),
+            "not_clearly_harmful_ids": [r["id"] for r, m in zip(rows, marks) if m == "n"],
+            "action": "reported only; flagged items kept (random sample, selection stays mechanical)"}
+
+
 def first_user_text(record):
     return first_user(record["messages"])
 
@@ -941,7 +956,7 @@ def write_manifest(conditions, apigen_all, aa_all, attack):
                              "paper used gpt-4o); generated locally in AgentAlign's simulated environment",
         "decontamination": decontam,
         "harmful_qc": {"candidates": len(qc), "passed": sum(r["status"] == "pass" for r in qc),
-                       "manual_spot_check_40": "pending: fill stats/harmful_spotcheck_40.csv"},
+                       "manual_spot_check_40": spotcheck_summary()},
         "eligible_counts": {"apigen_mt": len(apigen_all), "agentalign_benign": len(aa_all), "attack_pool": len(attack)},
         "scripts": script_versions(),
         "licences": {"Salesforce/APIGen-MT-5k": "CC-BY-NC-4.0 (research use only)", "jc-ryan/AgentAlign": "Apache-2.0"},
