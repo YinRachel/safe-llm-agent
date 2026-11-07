@@ -1,6 +1,7 @@
 # Sourced by the Viking job scripts. Runs are grouped per base model and post-training method:
 #   results/<model>_<method>/<run>, e.g. results/qwen4B_LoRA/p10-12345, results/qwen4B_SafeLoRA/p10-12346.
-# MODEL_TAG names the base model (qwen4B for Qwen3-4B-Instruct-2507, qwen2.5-3B for Qwen2.5-3B-Instruct).
+# MODEL_TAG names the base model (qwen4B for Qwen3-4B-Instruct-2507, qwen2.5-3B for Qwen2.5-3B-Instruct,
+# glm4-9B for GLM-4-9B-Chat, llama3.1-8B for Llama-3.1-8B-Instruct).
 # When it is unset it is read from an input path under results/<model>_<method>/, else qwen4B.
 
 method_label() {  # train_lora / train_defense / posthoc_defense method -> folder suffix
@@ -15,7 +16,10 @@ model_tag() {  # [input paths...]
     if [[ -n "${MODEL_TAG:-}" ]]; then echo "$MODEL_TAG"; return; fi
     for path in "$@"; do
         if [[ "$path" =~ (^|/)results/([^/]+)_[^/_]+/ ]]; then echo "${BASH_REMATCH[2]}"; return; fi
-        case "$path" in Qwen/Qwen2.5-3B-Instruct) echo qwen2.5-3B; return ;; Qwen/Qwen3-4B-Instruct-2507) echo qwen4B; return ;; esac
+        case "$path" in
+            Qwen/Qwen2.5-3B-Instruct) echo qwen2.5-3B; return ;; Qwen/Qwen3-4B-Instruct-2507) echo qwen4B; return ;;
+            zai-org/glm-4-9b-chat-hf|THUDM/glm-4-9b-chat-hf) echo glm4-9B; return ;; meta-llama/Llama-3.1-8B-Instruct) echo llama3.1-8B; return ;;
+        esac
     done
     echo qwen4B
 }

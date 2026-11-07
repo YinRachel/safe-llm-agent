@@ -23,7 +23,7 @@ import time
 sys.path.insert(0, str(Path(__file__).parent))
 from train_lora import (  # noqa: E402,F401  (re-exported for the defence scripts)
     CONDITIONS, DEFAULT_MODEL, DEFAULT_REVISION, IGNORE_INDEX, MAX_LENGTH, Collator, assistant_char_spans,
-    build_dataset, git_commit, load_jsonl, normalize, tokenize_example, validate,
+    build_dataset, git_commit, load_jsonl, normalize, prepare_tokenizer, resolve_target_modules, tokenize_example, validate,
 )
 
 PROJECT = Path(__file__).resolve().parents[2]
@@ -53,7 +53,9 @@ def add_shared_args(parser, defaults=None):
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
-    parser.add_argument("--target-modules", default=TARGET_MODULES)
+    parser.add_argument("--target-modules", default="auto", help="Comma list; auto = all attention/MLP projections of the model.")
+    parser.add_argument("--chat-template", default="auto",
+                        help="auto = the chat format's template (train_lora.CHAT_FORMATS), none = the checkpoint's own, or a .jinja path.")
     parser.add_argument("--epochs", type=float, default=d["epochs"])
     parser.add_argument("--max-steps", type=int, default=-1)
     parser.add_argument("--lr", type=float, default=d["lr"])
@@ -90,15 +92,15 @@ def require(path, hint=""):
 def load_tokenizer(args):
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model, revision=model_revision(args))
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    args.chat_format, args.chat_template_path = prepare_tokenizer(tokenizer, getattr(args, "chat_template", "auto"))
     return tokenizer
 
 
 def lora_config(args):
     from peft import LoraConfig
     return LoraConfig(r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
-                      target_modules=args.target_modules.split(","), task_type="CAUSAL_LM")
+                      target_modules=resolve_target_modules(args.target_modules, getattr(args, "chat_format", "chatml")).split(","),
+                      task_type="CAUSAL_LM")
 
 
 def load_model_and_lora(args, dtype=None):

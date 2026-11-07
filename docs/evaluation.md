@@ -49,7 +49,7 @@ source .venv-serve/bin/activate
 bash scripts/eval/serve_qwen.sh
 ```
 
-The script uses the checkpoint's chat template and Hermes tool parsing, with automatic tool choice. This Instruct-2507 checkpoint is a non-thinking model; no reasoning parser is enabled. The server binds to localhost. Run evaluation on the same host, or access it through an SSH tunnel. Optional environment settings: `MODEL_PATH` (HF model or local checkpoint), `SERVED_MODEL_NAME`, `PORT`, `MAX_MODEL_LEN`, `TENSOR_PARALLEL_SIZE`, `GPU_MEMORY_UTILIZATION`. Additional vLLM flags can be passed to the shell script. The default is a 32K context cap, not the checkpoint's full advertised context length.
+The script uses the checkpoint's chat template and Hermes tool parsing, with automatic tool choice. For GLM-4 and Llama-3.1 models (a hub id by name, a local directory by its tokenizer) it loads `scripts/eval/tool_parsers.py` and uses `glm4_native` or `llama3_json_full` instead; `TOOL_CALL_PARSER` overrides the choice. This Instruct-2507 checkpoint is a non-thinking model; no reasoning parser is enabled. The server binds to localhost. Run evaluation on the same host, or access it through an SSH tunnel. Optional environment settings: `MODEL_PATH` (HF model or local checkpoint), `SERVED_MODEL_NAME`, `PORT`, `MAX_MODEL_LEN`, `TENSOR_PARALLEL_SIZE`, `GPU_MEMORY_UTILIZATION`. Additional vLLM flags can be passed to the shell script. The default is a 32K context cap, not the checkpoint's full advertised context length.
 
 In terminal 2:
 

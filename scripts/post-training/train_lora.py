@@ -1,11 +1,17 @@
-"""LoRA supervised fine-tuning of Qwen3-4B-Instruct-2507 on agent conversations.
+"""LoRA supervised fine-tuning of an instruct model (default Qwen3-4B-Instruct-2507) on agent conversations.
 
 Input: JSONL, one conversation per line, in OpenAI chat format:
   {"id", "source", "label", "tools": [...], "messages": [{"role", "content", "tool_calls"?}, ...]}
-The checkpoint's own chat template renders each conversation (with its tools), and
-loss is computed on assistant turns only (content, <tool_call> blocks and <|im_end|>).
+A chat template renders each conversation (with its tools), and loss is computed on assistant turns only
+(text, tool calls and the turn's end token). Supported chat formats (CHAT_FORMATS, detected from the tokenizer):
+  chatml  Qwen3 / Qwen2.5: the checkpoint's own template; trains up to and including <|im_end|>.
+  llama3  Llama-3.1-Instruct: templates/llama31_tools.jinja; trains up to and including <|eot_id|>.
+  glm4    GLM-4-9B-Chat (-hf): templates/glm4_tools.jinja; trains up to and including the next role token
+          (<|user|> / <|observation|>) or the closing <|endoftext|>.
+The template used is saved with the adapter and merged model, so vLLM serves the training format.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,8 +26,33 @@ DEFAULT_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 DEFAULT_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
 CONDITIONS = ("p00", "p05", "p10", "p20")  # harmful proportion of the training mix
 ROLES = {"system", "user", "assistant", "tool"}
-# Qwen chat templates open each assistant turn with this header and close it with <|im_end|>.
-ASSISTANT_TURN = re.compile(r"<\|im_start\|>assistant\n(.*?<\|im_end\|>)", re.DOTALL)
+PROJECT = Path(__file__).resolve().parents[2]
+QWEN_TARGET_MODULES = "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj"
+# Per chat format: a token only that format's tokenizer has, the regex for one assistant turn (group 1 = trained
+# text: everything after the turn header, through the token that ends the turn), the template that replaces the
+# checkpoint's own ("auto"; None keeps it) and the LoRA targets (all attention and MLP projections).
+CHAT_FORMATS = {
+    "chatml": {
+        "marker": "<|im_start|>",
+        "assistant_turn": re.compile(r"<\|im_start\|>assistant\n(.*?<\|im_end\|>)", re.DOTALL),
+        "template": None,
+        "target_modules": QWEN_TARGET_MODULES,
+    },
+    "llama3": {
+        "marker": "<|start_header_id|>",
+        "assistant_turn": re.compile(r"<\|start_header_id\|>assistant<\|end_header_id\|>\n\n(.*?<\|eo[tm]_id\|>)", re.DOTALL),
+        "template": "templates/llama31_tools.jinja",
+        "target_modules": QWEN_TARGET_MODULES,
+    },
+    "glm4": {
+        "marker": "<|observation|>",
+        # Consecutive <|assistant|> segments (text, then one per tool call) are one turn; the stop token is trained.
+        "assistant_turn": re.compile(r"<\|assistant\|>(.*?(?:<\|(?:user|observation|system)\|>|<\|endoftext\|>))", re.DOTALL),
+        "template": "templates/glm4_tools.jinja",
+        "target_modules": "q_proj,k_proj,v_proj,o_proj,gate_up_proj,down_proj",  # GlmMLP fuses gate and up
+    },
+}
+ASSISTANT_TURN = CHAT_FORMATS["chatml"]["assistant_turn"]
 IGNORE_INDEX = -100
 MAX_LENGTH = 9216  # build_trainset.py's MAX_TOKENS: every record is length-checked against this cap
 
@@ -70,8 +101,43 @@ def normalize(messages):
     return out
 
 
+def detect_chat_format(tokenizer):
+    vocab = tokenizer.get_vocab()
+    for name, spec in CHAT_FORMATS.items():
+        if spec["marker"] in vocab:
+            return name
+    sys.exit("Unsupported chat format: the tokenizer has none of " + ", ".join(s["marker"] for s in CHAT_FORMATS.values()))
+
+
+def text_chat_format(text):
+    """The chat format a rendered conversation is in (no tokenizer needed)."""
+    if text.startswith("[gMASK]<sop>"):
+        return "glm4"
+    if "<|start_header_id|>" in text:
+        return "llama3"
+    return "chatml"
+
+
+def prepare_tokenizer(tokenizer, chat_template="auto"):
+    """Install the chat template ("auto": the format's own, "none": the checkpoint's, else a path) and a pad token.
+    Returns (format name, template path or None)."""
+    name = detect_chat_format(tokenizer)
+    path = CHAT_FORMATS[name]["template"] if chat_template == "auto" else (None if chat_template == "none" else chat_template)
+    if path:
+        path = Path(path) if Path(path).is_absolute() or Path(path).exists() else PROJECT / path
+        tokenizer.chat_template = path.read_text(encoding="utf-8")
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    return name, (str(path) if path else None)
+
+
+def resolve_target_modules(target_modules, chat_format):
+    return CHAT_FORMATS[chat_format]["target_modules"] if target_modules == "auto" else target_modules
+
+
 def assistant_char_spans(text):
-    return [match.span(1) for match in ASSISTANT_TURN.finditer(text)]
+    pattern = CHAT_FORMATS[text_chat_format(text)]["assistant_turn"]
+    return [match.span(1) for match in pattern.finditer(text)]
 
 
 def tokenize_example(example, tokenizer, max_length):
@@ -152,7 +218,9 @@ def parse_args(argv=None):
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
-    parser.add_argument("--target-modules", default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj")
+    parser.add_argument("--target-modules", default="auto", help="Comma list; auto = all attention/MLP projections of the model.")
+    parser.add_argument("--chat-template", default="auto",
+                        help="auto = the chat format's template (CHAT_FORMATS), none = the checkpoint's own, or a .jinja path.")
     parser.add_argument("--epochs", type=float, default=2)
     parser.add_argument("--max-steps", type=int, default=-1)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -181,8 +249,9 @@ def main(argv=None):
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, revision=args.revision)
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    chat_format, template_path = prepare_tokenizer(tokenizer, args.chat_template)
+    target_modules = resolve_target_modules(args.target_modules, chat_format)
+    print(f"chat format {chat_format}, template {template_path or 'checkpoint'}, LoRA targets {target_modules}", flush=True)
 
     train_examples = load_jsonl(args.train)
     random.Random(args.seed).shuffle(train_examples)
@@ -210,6 +279,10 @@ def main(argv=None):
         "args": vars(args),
         "commit": git_commit(),
         "versions": {"torch": torch.__version__, "transformers": transformers.__version__, "peft": peft.__version__},
+        "chat_format": chat_format,
+        "chat_template": template_path,
+        "chat_template_sha256": hashlib.sha256(tokenizer.chat_template.encode()).hexdigest() if tokenizer.chat_template else None,
+        "target_modules": target_modules,
         "train_stats": train_stats,
         "val_stats": val_stats,
     }
@@ -221,7 +294,7 @@ def main(argv=None):
     model.config.use_cache = False
     model = get_peft_model(model, LoraConfig(
         r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
-        target_modules=args.target_modules.split(","), task_type="CAUSAL_LM",
+        target_modules=target_modules.split(","), task_type="CAUSAL_LM",
     ))
     model.print_trainable_parameters()
 

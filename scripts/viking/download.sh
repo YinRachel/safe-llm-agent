@@ -15,7 +15,8 @@ fi
 PY="$ENV_DIR/bin/python"
 # Raw datasets + eval sets + pins (build_trainset.py download needs raw files in $TRAINSET_ROOT/raw; HF fetches them if missing).
 "$PY" -I scripts/data/build_trainset.py download
-# Models: tokenizer, Qwen3-4B-Base (Safe LoRA), Qwen2.5-3B-Instruct (second base model), embedding model, generator. The generator is served in Mistral format (consolidated weights), so
+# Models: tokenizer, Qwen3-4B-Base (Safe LoRA), Qwen2.5-3B-Instruct, GLM-4-9B-Chat and Llama-3.1-8B-Instruct (further base
+# models; Llama is gated: accept the licence on the hub first), embedding model, generator. The generator is served in Mistral format (consolidated weights), so
 # the duplicate HF-format shards are skipped (the repo holds both: ~490 GB for Mistral-Large instead of ~246 GB).
 # GEN_MODEL defaults to Mistral-Large; e.g. GEN_MODEL=mistralai/Ministral-8B-Instruct-2410 for the 8B (~16 GB).
 GEN_MODEL="${GEN_MODEL:-mistralai/Mistral-Large-Instruct-2411}" "$PY" - <<'PY'
@@ -26,6 +27,9 @@ for repo, rev, patterns in (("Qwen/Qwen3-4B-Instruct-2507", "cdbee75f17c01a7cc42
                             ("Qwen/Qwen3-4B-Base", "906bfd4b4dc7f14ee4320094d8b41684abff8539", None),
                             # second base model (scripts/viking/qwen25_3b.sh)
                             ("Qwen/Qwen2.5-3B-Instruct", "aa8e72537993ba99e69dfaafa59ed015b17504d1", None),
+                            # further base models (scripts/viking/lora_models.sh)
+                            ("zai-org/glm-4-9b-chat-hf", "8599336fc6c125203efb2360bfaf4c80eef1d1bf", None),
+                            ("meta-llama/Llama-3.1-8B-Instruct", "0e9e39f249a16976918f6564b8830bc894c89659", ["*.json", "*.safetensors", "tokenizer*"]),
                             ("sentence-transformers/all-MiniLM-L6-v2", None, None),
                             (os.environ["GEN_MODEL"], None, ["consolidated*", "params.json", "tekken.json", "tokenizer.model*"]  # Ministral ships tekken.json, Mistral-Large-2411 tokenizer.model.v7)):
     path = snapshot_download(repo, revision=rev, allow_patterns=patterns)

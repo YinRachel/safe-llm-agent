@@ -5,7 +5,8 @@
 # Usage (login node, project root):
 #   SBATCH_ACCOUNT=CODE bash scripts/viking/eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]
 # MODEL_PATH: a local merged dir, or a hub id (MODEL_REVISION defaults to the pinned commit for the two base models).
-# CHAT_TEMPLATE: optional serving template, e.g. templates/ptst.jinja (F4 PTST).
+# CHAT_TEMPLATE: optional serving template, e.g. templates/ptst.jinja (F4 PTST). The GLM-4 and Llama-3.1 hub models
+# default to their training templates (templates/glm4_tools.jinja, templates/llama31_tools.jinja); merged runs carry theirs.
 # Extra sbatch options for every job: SBATCH_EXTRA="--mail-type=END --mail-user=..." (CUDA_MODULE etc. are exported).
 # Job ids are appended to results/eval_index.tsv (tag, benchmark, jobid, model_path, chat_template_sha256).
 # Outputs: <run>/eval/<benchmark>-<jobid> for a local results/<model>_<method>/<run>/merged, results/<model>_base/ for a hub id.
@@ -22,6 +23,12 @@ else
     case "$MODEL_PATH" in  # pinned commits of the hub base models
         Qwen/Qwen3-4B-Instruct-2507) export MODEL_REVISION="${MODEL_REVISION:-cdbee75f17c01a7cc42f958dc650907174af0554}" ;;
         Qwen/Qwen2.5-3B-Instruct) export MODEL_REVISION="${MODEL_REVISION:-aa8e72537993ba99e69dfaafa59ed015b17504d1}" ;;
+        zai-org/glm-4-9b-chat-hf)
+            export MODEL_REVISION="${MODEL_REVISION:-8599336fc6c125203efb2360bfaf4c80eef1d1bf}"
+            CHAT_TEMPLATE="${CHAT_TEMPLATE:-templates/glm4_tools.jinja}" ;;
+        meta-llama/Llama-3.1-8B-Instruct)
+            export MODEL_REVISION="${MODEL_REVISION:-0e9e39f249a16976918f6564b8830bc894c89659}"
+            CHAT_TEMPLATE="${CHAT_TEMPLATE:-templates/llama31_tools.jinja}" ;;
         *) [[ -n "${MODEL_REVISION:-}" ]] || { echo "Export MODEL_REVISION (immutable commit) for $MODEL_PATH" >&2; exit 1; } ;;
     esac
 fi

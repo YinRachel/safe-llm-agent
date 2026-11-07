@@ -110,7 +110,7 @@ def main(argv=None):
                                          text=True, stderr=subprocess.DEVNULL).strip()
     except (OSError, subprocess.CalledProcessError):
         commit = None
-    metadata = dict(protocol="HarmBench DirectRequest; one greedy completion per behavior; native Qwen chat template",
+    metadata = dict(protocol="HarmBench DirectRequest; one greedy completion per behavior; the model's chat template unless chat_template is set",
         source=str(source.resolve()), source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
         upstream_commit=commit, source_rows=len(rows), selected_rows=len(selected),
         selection="smoke" if args.smoke else "limit" if args.limit else "all_rows_of_supplied_text_csv",
