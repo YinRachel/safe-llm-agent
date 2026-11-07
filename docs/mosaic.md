@@ -41,8 +41,10 @@ Runware calls. Identical trajectory pairs tie without a call.
 
 The paper deploys MOSAIC models with their scaffold at test time: the MOSAIC system prompt and `refuse_unsafe_task`
 as a first-class action. Its "base → MOSAIC" rows compare the base model without the scaffold against the trained
-model with it. The standard evaluations serve the model bare. In that setting the full fine-tuned model (job
-38488165) became far more capable, but it stopped refusing AgentHarm's harmful tasks (refusals fell from 48% to 12%).
+model with it. The standard evaluations serve the model bare.
+
+The bare p00 baseline is the 38193xxx eval set (with ASB from 38218391). The 38413xxx runs and 38414507, which sit in
+the same `p00-38166985/eval/` folder, were served with `ping.jinja`: they are the PING baseline, not bare p00.
 
 `SCAFFOLD=mosaic` (`scripts/viking/eval_all.sh`) adds the scaffold to every benchmark through the serving layer, so no
 benchmark code changes:
