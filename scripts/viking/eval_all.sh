@@ -8,12 +8,25 @@
 # CHAT_TEMPLATE: optional serving template, e.g. templates/ptst.jinja (F4 PTST). The GLM-4 and Llama-3.1 hub models
 # default to their training templates (templates/glm4_tools.jinja, templates/llama31_tools.jinja); merged runs carry theirs.
 # Extra sbatch options for every job: SBATCH_EXTRA="--mail-type=END --mail-user=..." (CUDA_MODULE etc. are exported).
+# SCAFFOLD=mosaic: evaluate under the MOSAIC inference scaffold, as the paper deploys MOSAIC models (Qwen2.5 only):
+#   templates/mosaic.jinja adds its system prompt and the refuse_unsafe_task tool, the `mosaic` tool parser
+#   (scripts/eval/tool_parsers.py) turns a refusal call into a plain-text refusal and drops <think>, and
+#   MOSAIC_SCAFFOLD=1 applies the same rewrite where no tool parser runs. Outputs go to <eval root>/mosaic/ and the
+#   tag gets a -mosaic suffix.
 # Job ids are appended to results/eval_index.tsv (tag, benchmark, jobid, model_path, chat_template_sha256).
 # Outputs: <run>/eval/<benchmark>-<jobid> for a local results/<model>_<method>/<run>/merged, results/<model>_base/ for a hub id.
 set -euo pipefail
 MODEL_PATH="${1:?usage: eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
 TAG="${2:?usage: eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
 CHAT_TEMPLATE="${3:-}"
+if [[ "${SCAFFOLD:-}" == mosaic ]]; then
+    [[ -z "$CHAT_TEMPLATE" ]] || { echo "SCAFFOLD=mosaic brings its own template; drop CHAT_TEMPLATE" >&2; exit 1; }
+    CHAT_TEMPLATE=templates/mosaic.jinja
+    TAG="$TAG-mosaic"
+    export TOOL_CALL_PARSER=mosaic MOSAIC_SCAFFOLD=1
+elif [[ -n "${SCAFFOLD:-}" ]]; then
+    echo "Unknown SCAFFOLD: $SCAFFOLD (mosaic)" >&2; exit 2
+fi
 [[ -f scripts/viking/agentharm.sbatch ]] || { echo "Run from the project root" >&2; exit 1; }
 source scripts/viking/results_dir.sh
 check_scratch_link "$MODEL_PATH" || exit 1  # merged/ is a symlink into scratch for Viking training runs
@@ -46,6 +59,7 @@ else
     unset CHAT_TEMPLATE
 fi
 export MODEL_PATH
+if [[ "${SCAFFOLD:-}" == mosaic ]]; then export RESULTS_DIR="$(eval_root "$MODEL_PATH")/mosaic"; fi
 mkdir -p results logs  # sbatch opens logs/%x-%j.out before the job starts
 index=results/eval_index.tsv
 [[ -f "$index" ]] || printf 'tag\tbenchmark\tjobid\tmodel_path\tchat_template_sha256\n' > "$index"

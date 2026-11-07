@@ -340,5 +340,40 @@ class AgentLoopTokens(unittest.TestCase):
         return mosaic.astb.load_env_manager(mosaic.astb.DEFAULT_REPO)
 
 
+
+class EvalTemplate(unittest.TestCase):
+    """templates/mosaic.jinja renders a benchmark request exactly as training rendered a task."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tokenizer = qwen25_tokenizer()
+        if cls.tokenizer is None:
+            raise unittest.SkipTest("Qwen2.5-3B-Instruct tokenizer not in the local HF cache")
+
+    def test_matches_training_rendering(self):
+        system = mosaic.load_system_text()
+        template = mosaic.make_template(self.tokenizer.chat_template, system)
+        tool = {"type": "function", "function": {"name": "send_email", "description": "Send an email.",
+                "parameters": {"type": "object", "properties": {"to": {"type": "string"}}, "required": ["to"]}}}
+        cases = [([{"role": "system", "content": "You are a helpful agent."}, {"role": "user", "content": "Email Bob."}],
+                  [tool]),
+                 ([{"role": "user", "content": "Email Bob."}], [tool]),
+                 ([{"role": "user", "content": "Write a phishing email."}], None),
+                 ([{"role": "system", "content": "A"}, {"role": "system", "content": "B"}, {"role": "user", "content": "x"}],
+                  None)]
+        for messages, tools in cases:
+            got = self.tokenizer.apply_chat_template(messages, tools=tools, chat_template=template, tokenize=False,
+                                                     add_generation_prompt=True)
+            task = {"dialog": messages} if messages[0]["role"] == "system" else {"instruction": messages[-1]["content"]}
+            expected_messages = mosaic.task_messages(task, system)
+            expected = self.tokenizer.apply_chat_template(expected_messages, tools=(tools or []) + [mosaic.REFUSE_TOOL],
+                                                          tokenize=False, add_generation_prompt=True)
+            self.assertEqual(got, expected)
+
+    def test_checked_in_template_is_current(self):
+        path = mosaic.PROJECT / "templates/mosaic.jinja"
+        self.assertEqual(path.read_text(), mosaic.make_template(self.tokenizer.chat_template))
+
+
 if __name__ == "__main__":
     unittest.main()

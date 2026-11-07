@@ -18,6 +18,8 @@ Build the training parquet (2,000 Agent-SafetyBench tasks, minus prompts over --
     python scripts/post-training/mosaic.py build-data --output trainset/derived/mosaic_astb_train.parquet
 Fold a trained verl LoRA export into a standalone model (scripts/viking/mosaic_grpo.sbatch runs this):
     python scripts/post-training/mosaic.py export --export RUN/verl_export --lora-alpha 64 --output RUN/merged
+Write the evaluation scaffold (the paper deploys MOSAIC models with its prompt and refusal tool at test time):
+    python scripts/post-training/mosaic.py template --out templates/mosaic.jinja
 """
 import argparse
 from copy import deepcopy
@@ -69,12 +71,15 @@ def _arguments(value):
     return value if isinstance(value, dict) else {"value": value}
 
 
+TASK_INSTRUCTIONS = "\n\n# Task instructions\n"  # joins the MOSAIC text and a task's own system prompt
+
+
 def task_messages(task, system_text):
     """System prompt (MOSAIC text, then any task-specific system text) and the task's user turn or dialog history."""
     history = deepcopy(task["dialog"]) if task.get("dialog") else [{"role": "user", "content": task["instruction"]}]
     system = system_text
     if history and history[0]["role"] == "system":
-        system += "\n\n# Task instructions\n" + history.pop(0)["content"]
+        system += TASK_INSTRUCTIONS + history.pop(0)["content"]
     for message in history:
         for call in message.get("tool_calls") or []:
             call["function"]["arguments"] = _arguments(call["function"].get("arguments"))
@@ -392,13 +397,58 @@ def export(argv=None):
     print(f"{note} into {args.output}")
 
 
-COMMANDS = {"build-data": build_data, "export": export}
+# ----------------------------------------------------------------------------- evaluation scaffold
+TEMPLATE_MARK = "{#- MOSAIC scaffold preamble (scripts/post-training/mosaic.py template) #}"
+
+
+def make_template(original, system_text=None):
+    """The checkpoint's chat template behind a Jinja preamble that rewrites the request the way training built it
+    (task_messages, task_tools): the MOSAIC text leads the system prompt, any system prompt of the benchmark follows
+    under "# Task instructions", and refuse_unsafe_task is appended to the tools (added when there are none). The
+    rendering is then byte-identical to training's; scripts/eval/tool_parsers.py `mosaic` reads the replies."""
+    system_text = load_system_text() if system_text is None else system_text
+    preamble = (
+        TEMPLATE_MARK
+        + "{%- set mosaic_system = " + json.dumps(system_text) + " %}"
+        + "{%- set mosaic_refuse = " + json.dumps(REFUSE_TOOL) + " %}"
+        + "{%- if messages and messages[0].role == 'system' %}"
+        + "{%- set messages = [{'role': 'system', 'content': mosaic_system + " + json.dumps(TASK_INSTRUCTIONS)
+        + " + messages[0].content}] + messages[1:] %}"
+        + "{%- else %}"
+        + "{%- set messages = [{'role': 'system', 'content': mosaic_system}] + messages %}"
+        + "{%- endif %}"
+        + "{%- set tools = (tools if tools else []) + [mosaic_refuse] %}"
+    )
+    return preamble + original
+
+
+def template(argv=None):
+    """Write templates/mosaic.jinja (+ .json provenance) from the pinned Qwen2.5-3B-Instruct template in the HF cache."""
+    parser = argparse.ArgumentParser(description="Write the MOSAIC evaluation chat template.")
+    parser.add_argument("--out", type=Path, default=PROJECT / "templates/mosaic.jinja")
+    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--revision", default=DEFAULT_REVISION)
+    args = parser.parse_args(argv)
+    from safety_template import load_chat_template, sha256_text
+    original, system_text = load_chat_template(args.model, args.revision), load_system_text()
+    text = make_template(original, system_text)
+    args.out.write_text(text)
+    meta = dict(model=args.model, revision=args.revision, original_template_sha256=sha256_text(original),
+                template_sha256=sha256_text(text), system_text_sha256=sha256_text(system_text),
+                system_text_source=str(SYSTEM_TEXT.relative_to(PROJECT)), refuse_tool=REFUSE_TOOL,
+                method="MOSAIC inference scaffold: system prompt first, benchmark system prompt under "
+                       "'# Task instructions', refuse_unsafe_task appended to the tools")
+    args.out.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"wrote {args.out} (sha256 {meta['template_sha256'][:16]}) and {args.out.with_suffix('.json')}")
+
+
+COMMANDS = {"build-data": build_data, "export": export, "template": template}
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if not argv or argv[0] not in COMMANDS:
-        sys.exit("usage: mosaic.py build-data|export [options]")
+        sys.exit("usage: mosaic.py build-data|export|template [options]")
     COMMANDS[argv[0]](argv[1:])
 
 

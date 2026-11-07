@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import subprocess
 
+from tool_parsers import mosaic_output
+
 MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 
 
@@ -119,6 +121,7 @@ def main(argv=None):
         worker_multiprocessing_method="spawn",
         max_tokens=args.max_tokens, max_model_len=args.max_model_len,
         tensor_parallel_size=args.tensor_parallel_size,
+        output_filter="mosaic" if os.environ.get("MOSAIC_SCAFFOLD") == "1" else None,
         selected_ids=[row["BehaviorID"] for row in selected],
         chat_template=None if args.chat_template is None else dict(
             path=str(args.chat_template.resolve()), sha256=hashlib.sha256(args.chat_template.read_bytes()).hexdigest()))
@@ -146,8 +149,10 @@ def main(argv=None):
                     raise RuntimeError("Unexpected generation count from vLLM")
                 for row, prompt, output in zip(batch, prompts, outputs):
                     result = output.outputs[0]
-                    completion = dict(test_case=prompt, generation=result.text,
+                    completion = dict(test_case=prompt, generation=mosaic_output(result.text),
                                       finish_reason=result.finish_reason, generated_tokens=len(result.token_ids))
+                    if completion["generation"] != result.text:
+                        completion["raw_generation"] = result.text  # MOSAIC scaffold: the reply before mosaic_output
                     completions[row["BehaviorID"]] = [completion]
                     stream.write(json.dumps(dict(behavior_id=row["BehaviorID"], **completion), ensure_ascii=False) + "\n")
                     stream.flush()

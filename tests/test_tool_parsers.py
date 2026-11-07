@@ -1,7 +1,9 @@
-"""scripts/eval/tool_parsers.py: GLM-4 / Llama-3.1 tool-call parsing, offline (vLLM classes are stubbed)."""
+"""scripts/eval/tool_parsers.py: GLM-4 / Llama-3.1 / MOSAIC tool-call parsing, offline (vLLM classes are stubbed)."""
 import importlib.util
 import json
+import os
 from pathlib import Path
+import re
 import sys
 import types
 import unittest
@@ -15,7 +17,8 @@ def load(with_vllm):
     """Import tool_parsers.py, optionally against minimal stand-ins for the vLLM 0.10.2 classes it uses."""
     names = ["vllm", "vllm.entrypoints", "vllm.entrypoints.openai", "vllm.entrypoints.openai.protocol",
              "vllm.entrypoints.openai.tool_parsers", "vllm.entrypoints.openai.tool_parsers.abstract_tool_parser",
-             "vllm.entrypoints.openai.tool_parsers.llama_tool_parser", "vllm.entrypoints.chat_utils"]
+             "vllm.entrypoints.openai.tool_parsers.llama_tool_parser",
+             "vllm.entrypoints.openai.tool_parsers.hermes_tool_parser", "vllm.entrypoints.chat_utils"]
     saved = {name: sys.modules.pop(name, None) for name in names}
     if with_vllm:
         modules = {name: types.ModuleType(name) for name in names}
@@ -64,12 +67,25 @@ def load(with_vllm):
         class Llama3JsonToolParser(ToolParser):
             pass
 
+        class Hermes2ProToolParser(ToolParser):  # vLLM 0.10.2's extract_tool_calls, minus logging
+            def extract_tool_calls(self, model_output, request):
+                if "<tool_call>" not in model_output:
+                    return ExtractedToolCallInformation(tools_called=False, tool_calls=[], content=model_output)
+                raw = re.findall(r"<tool_call>(.*?)</tool_call>|<tool_call>(.*)", model_output, re.DOTALL)
+                calls = [json.loads(a or b) for a, b in raw]
+                content = model_output[:model_output.find("<tool_call>")]
+                return ExtractedToolCallInformation(
+                    tools_called=True, content=content or None,
+                    tool_calls=[ToolCall(function=FunctionCall(name=c["name"], arguments=json.dumps(c["arguments"])))
+                                for c in calls])
+
         protocol = modules["vllm.entrypoints.openai.protocol"]
         for cls in (FunctionCall, ToolCall, DeltaFunctionCall, DeltaToolCall, DeltaMessage, ExtractedToolCallInformation):
             setattr(protocol, cls.__name__, cls)
         modules["vllm.entrypoints.openai.tool_parsers.abstract_tool_parser"].ToolParser = ToolParser
         modules["vllm.entrypoints.openai.tool_parsers.abstract_tool_parser"].ToolParserManager = ToolParserManager
         modules["vllm.entrypoints.openai.tool_parsers.llama_tool_parser"].Llama3JsonToolParser = Llama3JsonToolParser
+        modules["vllm.entrypoints.openai.tool_parsers.hermes_tool_parser"].Hermes2ProToolParser = Hermes2ProToolParser
         modules["vllm.entrypoints.chat_utils"].make_tool_call_id = lambda: "call_x"
         sys.modules.update(modules)
     try:
@@ -128,6 +144,47 @@ class Llama3ParseTests(unittest.TestCase):
             self.assertIsNone(tp.parse_llama3(text), text)
 
 
+def mosaic_call(name, arguments):
+    return "<tool_call>\n" + json.dumps({"name": name, "arguments": arguments}) + "\n</tool_call>"
+
+
+class MosaicParseTests(unittest.TestCase):
+    def test_tool_call_kept_and_reasoning_dropped(self):
+        text = "<think>Plan it.</think>\n<safety_thoughts>Fine.</safety_thoughts>\n" + mosaic_call("lookup", {"q": "X"})
+        content, refused = tp.parse_mosaic(text)
+        self.assertFalse(refused)
+        self.assertEqual(content, mosaic_call("lookup", {"q": "X"}))
+
+    def test_refusal_replaces_the_turn(self):
+        text = "<think>Harmful.</think>" + mosaic_call("refuse_unsafe_task", {"reason": "It spreads\nmisinformation."})
+        self.assertEqual(tp.parse_mosaic(text), (tp.mosaic_refusal("It spreads misinformation."), True))
+        self.assertIn("refuse", tp.mosaic_refusal("x"))
+
+    def test_refusal_named_only_inside_reasoning_is_not_one(self):
+        text = "<think>I could " + mosaic_call("refuse_unsafe_task", {"reason": "r"}) + " but no.</think>" \
+               + mosaic_call("lookup", {"q": "X"})
+        self.assertEqual(tp.parse_mosaic(text), (mosaic_call("lookup", {"q": "X"}), False))
+
+    def test_answer_unwrapped_and_unclosed_think_dropped(self):
+        self.assertEqual(tp.parse_mosaic("<think>Done.</think>\n<answer>The flight is booked.</answer>"),
+                         ("The flight is booked.", False))
+        self.assertEqual(tp.parse_mosaic("<think>Cut off mid-thought"), ("", False))
+        self.assertEqual(tp.parse_mosaic("Plain reply."), ("Plain reply.", False))
+
+    def test_mosaic_output_only_with_the_scaffold(self):
+        text = "<think>x</think><answer>Hi</answer>"
+        saved = os.environ.pop("MOSAIC_SCAFFOLD", None)
+        try:
+            self.assertEqual(tp.mosaic_output(text), text)
+            os.environ["MOSAIC_SCAFFOLD"] = "1"
+            self.assertEqual(tp.mosaic_output(text), "Hi")
+            self.assertIsNone(tp.mosaic_output(None))
+        finally:
+            os.environ.pop("MOSAIC_SCAFFOLD", None)
+            if saved is not None:
+                os.environ["MOSAIC_SCAFFOLD"] = saved
+
+
 class VllmClassTests(unittest.TestCase):
     """The registered parser classes against stubbed vLLM 0.10.2 types."""
 
@@ -141,6 +198,21 @@ class VllmClassTests(unittest.TestCase):
         manager = self.tp.ToolParserManager.tool_parsers
         self.assertIs(manager["glm4_native"], self.tp.Glm4NativeToolParser)
         self.assertIs(manager["llama3_json_full"], self.tp.Llama3JsonFullToolParser)
+        self.assertIs(manager["mosaic"], self.tp.MosaicToolParser)
+
+    def test_mosaic_parser(self):
+        parser = self.tp.MosaicToolParser(None)
+        info = parser.extract_tool_calls("<think>ok</think>\n" + mosaic_call("lookup", {"q": "X"}), self.request)
+        self.assertTrue(info.tools_called)
+        self.assertEqual([(c.function.name, json.loads(c.function.arguments)) for c in info.tool_calls],
+                         [("lookup", {"q": "X"})])
+        self.assertIsNone(info.content)
+        refusal = parser.extract_tool_calls("<think>no</think>" + mosaic_call("refuse_unsafe_task", {"reason": "r"}),
+                                            self.request)
+        self.assertEqual((refusal.tools_called, refusal.tool_calls, refusal.content),
+                         (False, [], self.tp.mosaic_refusal("r")))
+        answer = parser.extract_tool_calls("<think>done</think><answer>Booked.</answer>", self.request)
+        self.assertEqual((answer.tools_called, answer.content), (False, "Booked."))
 
     def test_glm_keeps_special_tokens_and_extracts(self):
         parser = self.tp.Glm4NativeToolParser(None)

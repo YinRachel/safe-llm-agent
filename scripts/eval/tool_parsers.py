@@ -1,4 +1,4 @@
-"""vLLM tool-call parsers for the GLM-4 and Llama-3.1 base models (vLLM 0.10.2 API).
+"""vLLM tool-call parsers for the GLM-4 and Llama-3.1 base models and the MOSAIC scaffold (vLLM 0.10.2 API).
 
 Loaded by scripts/eval/serve_qwen.sh with `--tool-parser-plugin scripts/eval/tool_parsers.py`; they read the formats
 that templates/glm4_tools.jinja and templates/llama31_tools.jinja train and serve:
@@ -8,10 +8,18 @@ that templates/glm4_tools.jinja and templates/llama31_tools.jinja train and serv
   llama3_json_full  `{"name": ..., "parameters": {...}}` objects joined with "; ", as vLLM's llama3_json, but read with
                     a JSON decoder: llama3_json's regex allows one level of nested braces, so a call whose arguments
                     hold a list of objects comes back as plain text. Streaming is llama3_json's (partial JSON).
+  mosaic            hermes behind the MOSAIC turn format that templates/mosaic.jinja asks for: <think> and
+                    <safety_thoughts> are dropped, <answer> is unwrapped, and a refuse_unsafe_task call becomes a
+                    plain-text refusal with no tool call, so the episode ends there as in training and the benchmarks'
+                    refusal judges see it. Non-streaming only (every benchmark here makes plain requests).
+
+Requests without tools never reach a tool parser, so ASB's prompted mode, Agent-SafetyBench's tool-less tasks and
+HarmBench's offline generation apply the same rewrite through mosaic_output() when MOSAIC_SCAFFOLD=1.
 
 The pure-text logic (parse_glm4, parse_llama3) has no vLLM dependency and is unit-tested in tests/test_tool_parsers.py.
 """
 import json
+import os
 import re
 
 GLM4_SEPARATOR = "<|assistant|>"
@@ -97,6 +105,41 @@ def parse_llama3(text):
     return calls or None
 
 
+MOSAIC_REFUSE_TOOL = "refuse_unsafe_task"  # scripts/post-training/mosaic.py REFUSE_TOOL_NAME
+MOSAIC_REASONING = re.compile(r"<(think|safety_thoughts)>.*?(?:</\1>|\Z)", re.S)
+MOSAIC_ANSWER = re.compile(r"<answer>(.*?)(?:</answer>|\Z)", re.S)
+MOSAIC_CALL = re.compile(r"<tool_call>\s*(.*?)\s*(?:</tool_call>|\Z)", re.S)
+
+
+def mosaic_refusal(reason):
+    reason = " ".join(str(reason).split())
+    return "I refuse to carry out this task because it is unsafe." + (f" Reason: {reason}" if reason else "")
+
+
+def parse_mosaic(text):
+    """MOSAIC turn -> (content, refused). Reasoning blocks go (an unclosed one runs to the end), a refuse_unsafe_task
+    call replaces the whole turn with a refusal, <answer> tags are unwrapped, and other <tool_call> blocks stay in
+    place for the hermes parser."""
+    text = MOSAIC_REASONING.sub("", text)
+    for raw in MOSAIC_CALL.findall(text):
+        try:
+            call = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(call, dict) and call.get("name") == MOSAIC_REFUSE_TOOL:
+            arguments = call.get("arguments")
+            return mosaic_refusal(arguments.get("reason", "") if isinstance(arguments, dict) else ""), True
+    return MOSAIC_ANSWER.sub(lambda match: match.group(1), text).strip(), False
+
+
+def mosaic_output(text):
+    """The `mosaic` parser's rewrite for replies that bypass the server's tool parser; identity unless
+    MOSAIC_SCAFFOLD=1 (scripts/viking/eval_all.sh sets it with SCAFFOLD=mosaic)."""
+    if text is None or os.environ.get("MOSAIC_SCAFFOLD") != "1":
+        return text
+    return parse_mosaic(text)[0]
+
+
 def _tool_names(request):
     return {tool.function.name for tool in (getattr(request, "tools", None) or [])}
 
@@ -105,6 +148,7 @@ try:  # the classes below need vLLM; the parsing functions above do not
     from vllm.entrypoints.openai.protocol import (DeltaFunctionCall, DeltaMessage, DeltaToolCall,
                                                   ExtractedToolCallInformation, FunctionCall, ToolCall)
     from vllm.entrypoints.openai.tool_parsers.abstract_tool_parser import ToolParser, ToolParserManager
+    from vllm.entrypoints.openai.tool_parsers.hermes_tool_parser import Hermes2ProToolParser
     from vllm.entrypoints.openai.tool_parsers.llama_tool_parser import Llama3JsonToolParser
     from vllm.entrypoints.chat_utils import make_tool_call_id
 except ImportError:  # pragma: no cover - imported without vLLM (tests)
@@ -174,3 +218,17 @@ if ToolParser is not None:
         def extract_tool_calls(self, model_output, request):
             calls = parse_llama3(model_output)
             return _extracted(None, calls) if calls else _extracted(model_output, [])
+
+    @ToolParserManager.register_module("mosaic")
+    class MosaicToolParser(Hermes2ProToolParser):
+        def extract_tool_calls(self, model_output, request):
+            content, refused = parse_mosaic(model_output)
+            if refused:
+                return _extracted(content, [])
+            info = super().extract_tool_calls(content, request)
+            if not info.tools_called:
+                info.content = content or None
+            return info
+
+        def extract_tool_calls_streaming(self, *args, **kwargs):
+            raise NotImplementedError("the mosaic parser is non-streaming; send stream=False")

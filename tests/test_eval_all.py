@@ -13,19 +13,21 @@ ROOT = Path(__file__).parents[1]
 FAKE_SBATCH = """#!/usr/bin/env bash
 n=$(( $(ls "$LOG" | wc -l) + 1 ))
 { printf 'ARGS'; printf ' %s' "$@"; printf '\\nMODEL_PATH=%s\\nMODEL_REVISION=%s\\nCHAT_TEMPLATE=%s\\n' \\
-  "${MODEL_PATH:-}" "${MODEL_REVISION:-<unset>}" "${CHAT_TEMPLATE:-<unset>}"; } > "$LOG/$n"
+  "${MODEL_PATH:-}" "${MODEL_REVISION:-<unset>}" "${CHAT_TEMPLATE:-<unset>}";
+  printf 'TOOL_CALL_PARSER=%s\\nMOSAIC_SCAFFOLD=%s\\nRESULTS_DIR=%s\\n' \\
+  "${TOOL_CALL_PARSER:-<unset>}" "${MOSAIC_SCAFFOLD:-<unset>}" "${RESULTS_DIR:-<unset>}"; } > "$LOG/$n"
 echo "10$n"
 """
 
 
 class EvalAllTests(unittest.TestCase):
-    def run_script(self, *args, revision="should-be-unset"):
+    def run_script(self, *args, revision="should-be-unset", extra_env=None):
         self.tmp = tempfile.TemporaryDirectory()
         work = Path(self.tmp.name)
         shutil.copytree(ROOT / "scripts", work / "scripts")
         (work / "templates").mkdir()
         (work / "templates/ptst.jinja").write_text("T")
-        for name in ("glm4_tools.jinja", "llama31_tools.jinja"):
+        for name in ("glm4_tools.jinja", "llama31_tools.jinja", "mosaic.jinja"):
             shutil.copy(ROOT / "templates" / name, work / "templates" / name)
         model = work / "results/qwen4B_LoRA/p10-1/merged"
         model.mkdir(parents=True)
@@ -36,6 +38,7 @@ class EvalAllTests(unittest.TestCase):
         (bin_dir / "sbatch").chmod(0o755)
         env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "LOG": str(log)}
         env.pop("MODEL_REVISION", None)
+        env.update(extra_env or {})
         if revision:
             env["MODEL_REVISION"] = revision
         subprocess.run(["bash", "scripts/viking/eval_all.sh", *args], cwd=work, env=env, check=True, capture_output=True)
@@ -64,6 +67,26 @@ class EvalAllTests(unittest.TestCase):
         self.assertEqual(index[0].split("\t"), ["tag", "benchmark", "jobid", "model_path", "chat_template_sha256"])
         self.assertEqual(len(index), 8)
         self.assertEqual(index[1].split("\t")[4], hashlib.sha256(b"T").hexdigest())
+
+    def test_mosaic_scaffold(self):
+        work, calls, index = self.run_script("results/qwen4B_LoRA/p10-1/merged", "p10", extra_env={"SCAFFOLD": "mosaic"})
+        self.assertEqual(len(calls), 7)
+        run = (work / "results/qwen4B_LoRA/p10-1").resolve()
+        for call in calls:
+            self.assertIn("--job-name=eval-p10-mosaic-", call)
+            self.assertIn(f"CHAT_TEMPLATE={work.resolve() / 'templates/mosaic.jinja'}", call)
+            self.assertIn("TOOL_CALL_PARSER=mosaic", call)
+            self.assertIn("MOSAIC_SCAFFOLD=1", call)
+            self.assertIn(f"RESULTS_DIR={run}/eval/mosaic", call)
+        self.assertIn("--chat-template", calls[6])
+        self.assertTrue(all(row.split("\t")[0] == "p10-mosaic" for row in index[1:]))
+        sha = hashlib.sha256((ROOT / "templates/mosaic.jinja").read_bytes()).hexdigest()
+        self.assertEqual(index[1].split("\t")[4], sha)
+
+    def test_mosaic_scaffold_refuses_a_second_template(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_script("results/qwen4B_LoRA/p10-1/merged", "p10", "templates/ptst.jinja",
+                            extra_env={"SCAFFOLD": "mosaic"})
 
     def test_hub_model_without_template(self):
         _, calls, index = self.run_script("Qwen/Qwen3-4B-Instruct-2507", "base", revision=None)

@@ -89,7 +89,8 @@ def complete(client, model, seed, messages, tools):
         call = message.tool_calls[0]
         arguments = json.loads(call.function.arguments) if call.function.arguments else {}
         return {"type": "tool", "tool_call_id": call.id, "tool_name": call.function.name, "arguments": arguments}
-    return {"type": "content", "content": message.content}
+    from tool_parsers import mosaic_output  # MOSAIC_SCAFFOLD=1: tool-less tasks never reach the server's parser
+    return {"type": "content", "content": mosaic_output(message.content)}
 
 
 def run_episode(generate, env_manager, d):
@@ -165,7 +166,8 @@ def generate(args, output):
             exceeded.append(d["id"])
         kept.append(dict(d, output=messages))
     (output / "gen_res.json").write_text(json.dumps(kept, indent=2, ensure_ascii=False) + "\n")
-    summary = dict(benchmark="agent_safetybench", stage="generation", upstream_commit=ASTB_COMMIT, samples=len(data),
+    summary = dict(benchmark="agent_safetybench", stage="generation", upstream_commit=ASTB_COMMIT,
+                   output_filter="mosaic" if os.environ.get("MOSAIC_SCAFFOLD") == "1" else None, samples=len(data),
                    generated=len(kept), error_samples=errors, exceed_round_ids=exceeded,
                    note="Score with: python scripts/eval/agent_safetybench_eval.py score --generation <this dir>/gen_res.json")
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")

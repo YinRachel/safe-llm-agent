@@ -31,10 +31,34 @@ MODEL_PATH=results/qwen2.5-3B_LoRA/p00-<job>/merged sbatch scripts/viking/mosaic
 MODEL_PATH=results/qwen2.5-3B_LoRA/p00-<job>/merged LORA_RANK=0 sbatch --partition=gpuplus --mem=160G \
     scripts/viking/mosaic_grpo.sbatch                                 # full fine-tuning, as in the paper
 bash scripts/viking/qwen25_3b.sh eval results/qwen2.5-3B_MOSAIC/p00-<job>-<job2>
+SCAFFOLD=mosaic bash scripts/viking/qwen25_3b.sh eval results/qwen2.5-3B_MOSAIC/p00-<job>-<job2>   # with the scaffold
 ```
 
 One epoch is 500 steps (2,000 tasks at 4 per step). Each step makes up to 24 judge calls, so an epoch is about 12,000
 Runware calls. Identical trajectory pairs tie without a call.
+
+## Evaluation with the MOSAIC scaffold
+
+The paper deploys MOSAIC models with their scaffold at test time: the MOSAIC system prompt and `refuse_unsafe_task`
+as a first-class action. Its "base → MOSAIC" rows compare the base model without the scaffold against the trained
+model with it. The standard evaluations serve the model bare. In that setting the full fine-tuned model (job
+38488165) became far more capable, but it stopped refusing AgentHarm's harmful tasks (refusals fell from 48% to 12%).
+
+`SCAFFOLD=mosaic` (`scripts/viking/eval_all.sh`) adds the scaffold to every benchmark through the serving layer, so no
+benchmark code changes:
+
+- **`templates/mosaic.jinja`** (`mosaic.py template`) is Qwen2.5's template behind a preamble. The MOSAIC text leads
+  the system prompt, any system prompt from the benchmark follows under `# Task instructions`, and the refusal tool is
+  appended to the tools. Requests render byte-identically to training (`tests/test_mosaic.py`).
+- **The `mosaic` tool parser** (`scripts/eval/tool_parsers.py`) drops `<think>` and `<safety_thoughts>`, unwraps
+  `<answer>`, and turns a refusal call into a plain-text refusal with no tool call. The episode ends there, as in
+  training, and the benchmarks' own refusal judges see the refusal.
+- **`MOSAIC_SCAFFOLD=1`** applies the same rewrite where no tool parser runs: ASB's prompted mode,
+  Agent-SafetyBench's tool-less tasks, and HarmBench's offline generation. That is recorded as `output_filter` in
+  their summaries; HarmBench keeps `raw_generation`.
+
+Results go to `<run>/eval/mosaic/`, and the tag gets a `-mosaic` suffix. Run both the starting model and the trained
+model this way. Together with the bare runs, that gives the 2×2 of {p00, MOSAIC} × {bare, scaffold}.
 
 ## Choices that differ from the paper
 

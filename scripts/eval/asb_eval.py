@@ -19,7 +19,10 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import os
 import subprocess
+
+from tool_parsers import mosaic_output
 
 ASB_COMMIT = "544540ff0788998072f7df463056fd17e62cc9f4"  # same pin as build_trainset.EVAL_SOURCES["asb"]
 DEFAULT_REPO = Path(__file__).resolve().parents[2] / "third_party/ASB"
@@ -283,7 +286,7 @@ class Target:
         message = self.chat(messages)
         if message.tool_calls:
             return json.dumps([{"name": c.function.name, "parameters": c.function.arguments} for c in message.tool_calls])
-        return message.content or ""
+        return mosaic_output(message.content or "")
 
     def respond(self, messages, tools=None, json_return=False):
         """Returns (response_message, tool_calls) like pyopenagi Response."""
@@ -294,7 +297,7 @@ class Target:
                          for c in message.tool_calls] if message.tool_calls else None
             except Exception as error:  # gpt_llm: any parse error replaces the whole response
                 return f"An unexpected error occurred: {error}", None
-            return message.content, calls
+            return mosaic_output(message.content), calls
         if tools:
             messages[-1]["content"] += TOOL_PREFIX + json.dumps(tools) + TOOL_SUFFIX  # mutates history, as upstream
             text = self.text(messages)
@@ -464,7 +467,8 @@ def run(args, output, judge):
             else:
                 errors.append(case["id"])
             stream.write(json.dumps(row) + "\n")
-    summary = dict(benchmark="asb", upstream_commit=ASB_COMMIT, tool_mode=args.asb_tool_mode, cases=len(cases),
+    summary = dict(benchmark="asb", upstream_commit=ASB_COMMIT, tool_mode=args.asb_tool_mode,
+                   output_filter="mosaic" if os.environ.get("MOSAIC_SCAFFOLD") == "1" else None, cases=len(cases),
                    completed=len(rows), errored_case_ids=errors, refusal_judge_error_case_ids=judge_errors,
                    valid=not errors and not judge_errors and len(rows) == len(cases), results=aggregate(rows))
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
