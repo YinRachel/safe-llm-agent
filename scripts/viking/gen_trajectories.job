@@ -50,12 +50,14 @@ if command -v nvcc >/dev/null 2>&1; then export VLLM_USE_FLASHINFER_SAMPLER="${V
 else export VLLM_USE_FLASHINFER_SAMPLER=0; fi
 # Single-node tensor parallelism talks over NVLink/PCIe; NCCL's network plugin init segfaulted on the H100 nodes, so disable it.
 export NCCL_NET_PLUGIN="${NCCL_NET_PLUGIN:-none}" NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}" NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
+# H100 PCIe nodes have no NVLink: vLLM's custom all-reduce fails in CUDA-graph capture ('invalid argument'), so use NCCL.
+TP_ARGS=""; if [[ "$TP" -gt 1 ]]; then TP_ARGS="--disable-custom-all-reduce"; fi
 PORT=8000
 mkdir -p logs
 vllm serve "$MODEL" --revision "$MISTRAL_REVISION" --served-model-name "$MODEL" \
   --tensor-parallel-size "$TP" ${QUANT:+--quantization "$QUANT"} --max-model-len 16384 --gpu-memory-utilization 0.92 \
   --tokenizer-mode mistral --config-format mistral --load-format mistral \
-  --tool-call-parser mistral --enable-auto-tool-choice --seed 42 --port "$PORT" ${EXTRA_SERVE_ARGS:-} > "logs/vllm-gen-${SLURM_JOB_ID}.log" 2>&1 &
+  --tool-call-parser mistral --enable-auto-tool-choice --seed 42 --port "$PORT" $TP_ARGS ${EXTRA_SERVE_ARGS:-} > "logs/vllm-gen-${SLURM_JOB_ID}.log" 2>&1 &
 server_pid=$!
 trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
 timeout 1800 bash -c "until curl -sf localhost:$PORT/health >/dev/null; do kill -0 $server_pid || exit 1; sleep 10; done"
