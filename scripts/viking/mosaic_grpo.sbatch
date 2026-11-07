@@ -14,10 +14,16 @@
 #   TRAIN_FILE  default trainset/derived/mosaic_astb_train.parquet (python scripts/post-training/mosaic.py build-data)
 #   LR (1e-5 with LoRA, 1e-6 for full fine-tuning), LORA_RANK (16), LORA_ALPHA (32), N_GPUS (1)
 #   LORA_RANK=0 trains all weights, as the paper does: verl then loads a separate frozen reference copy, Adam states
-#               live on the CPU between updates, only the last 2 checkpoints (~36 GB each) are kept, and the run
+#               live on the CPU between updates, only the last checkpoint (~37 GB) is kept, and the run
 #               folder ends in -full. Needs an 80 GB GPU: sbatch --partition=gpuplus --mem=160G ...
 #   TRAIN_PYTHON  default .venv-serve-cu128/bin/python, the env train_lora.sbatch uses, with requirements-rl.txt added
-# Output: results/<MODEL_TAG>_MOSAIC/<run>-<jobid>/{checkpoints,verl_export,merged}; evaluate merged/ with
+#   OUT         an earlier run folder to resume from its last checkpoint (verl's resume_mode=auto), e.g.
+#               OUT=results/qwen2.5-3B_MOSAIC/p00-123-456; by default a new folder is made
+#   CKPT_ROOT   default /mnt/scratch/users/$USER/mosaic-checkpoints. Checkpoints hold the whole model in fp32 even with
+#               LoRA (~14 GB each, ~37 GB with full fine-tuning optimizer state), too big for the 100 GB home quota,
+#               so they and verl_export/ go to scratch under <CKPT_ROOT>/<run folder name>; the last 2 are kept
+#               (1 with full fine-tuning).
+# Output: results/<MODEL_TAG>_MOSAIC/<run>-<jobid>/merged (checkpoints and verl_export/ in scratch); evaluate merged/ with
 # scripts/viking/qwen25_3b.sh eval <that dir>. Extra arguments are verl Hydra overrides, e.g. a smoke run:
 #   MODEL_PATH=results/qwen2.5-3B_LoRA/p00-123/merged sbatch scripts/viking/mosaic_grpo.sbatch trainer.total_training_steps=5
 set -euo pipefail
@@ -37,13 +43,13 @@ TRAIN_FILE="${TRAIN_FILE:-trainset/derived/mosaic_astb_train.parquet}"
 LORA_RANK="${LORA_RANK:-16}"
 if (( LORA_RANK > 0 )); then
     LR="${LR:-1e-5}"
-    MODE_ARGS=()
+    MODE_ARGS=(trainer.max_actor_ckpt_to_keep=2)
     suffix=""
 else
     LR="${LR:-1e-6}"
     MODE_ARGS=(actor_rollout_ref.actor.fsdp_config.optimizer_offload=True
                actor_rollout_ref.ref.fsdp_config.param_offload=True
-               trainer.max_actor_ckpt_to_keep=2)
+               trainer.max_actor_ckpt_to_keep=1)
     suffix="-full"
 fi
 LORA_ALPHA="${LORA_ALPHA:-32}"
@@ -51,8 +57,10 @@ N_GPUS="${N_GPUS:-1}"
 source scripts/viking/results_dir.sh
 run="${MODEL_PATH%/}"
 [[ "$(basename "$run")" == merged ]] && run="$(dirname "$run")"
-OUT="$(results_group mosaic "$MODEL_PATH")/$(basename "$run")${suffix}-${SLURM_JOB_ID}"
-mkdir -p "$OUT"
+OUT="${OUT:-$(results_group mosaic "$MODEL_PATH")/$(basename "$run")${suffix}-${SLURM_JOB_ID}}"
+OUT="${OUT%/}"
+CKPT="${CKPT_ROOT:-/mnt/scratch/users/$USER/mosaic-checkpoints}/$(basename "$OUT")"
+mkdir -p "$OUT" "$CKPT"
 export PYTHONPATH="$PWD/scripts/post-training:$PWD/scripts/eval${PYTHONPATH:+:$PYTHONPATH}"
 export ASTB_REPO="${ASTB_REPO:-$PWD/third_party/Agent-SafetyBench}"
 # Slurm exports ROCR_VISIBLE_DEVICES (AMD) next to CUDA_VISIBLE_DEVICES; verl's workers refuse to start with both.
@@ -122,13 +130,13 @@ unset ROCR_VISIBLE_DEVICES
     trainer.logger='["console"]' \
     trainer.project_name=mosaic \
     trainer.experiment_name="$(basename "$OUT")" \
-    trainer.default_local_dir="$OUT/checkpoints" \
+    trainer.default_local_dir="$CKPT/checkpoints" \
     "${MODE_ARGS[@]}" \
     "$@"
 
-step="$(cat "$OUT/checkpoints/latest_checkpointed_iteration.txt")"
+step="$(cat "$CKPT/checkpoints/latest_checkpointed_iteration.txt")"
 "$TRAIN_PYTHON" -m verl.model_merger merge --backend fsdp \
-    --local_dir "$OUT/checkpoints/global_step_$step/actor" --target_dir "$OUT/verl_export"
-"$TRAIN_PYTHON" scripts/post-training/mosaic.py export --export "$OUT/verl_export" --lora-alpha "$LORA_ALPHA" \
+    --local_dir "$CKPT/checkpoints/global_step_$step/actor" --target_dir "$CKPT/verl_export"
+"$TRAIN_PYTHON" scripts/post-training/mosaic.py export --export "$CKPT/verl_export" --lora-alpha "$LORA_ALPHA" \
     --output "$OUT/merged"
 echo "MOSAIC model: $OUT/merged (step $step)"

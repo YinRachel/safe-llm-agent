@@ -51,6 +51,10 @@ Runware calls. Identical trajectory pairs tie without a call.
 - **LoRA** (r=16, α=32, as in `train_lora.py`) with lr 1e-5 by default. The paper's 1e-6 looks like full
   fine-tuning, which `LORA_RANK=0` runs (lr 1e-6, on an 80 GB gpuplus GPU, with Adam states offloaded to the CPU
   between updates and a separate frozen reference copy). bf16 is used instead of fp16.
+- **Checkpoints** go to scratch (`CKPT_ROOT`, default `/mnt/scratch/users/$USER/mosaic-checkpoints/<run>`): verl
+  stores the whole model in fp32 even with LoRA (~14 GB each; ~37 GB with full fine-tuning optimizer state), which
+  filled the 100 GB home quota and killed a run at step 100. Only the last 2 are kept (1 for full fine-tuning).
+  `OUT=<earlier run folder>` resumes a run from its last checkpoint.
 - **Batching.** Batch 4 prompts × 4 rollouts with one PPO update per step. The paper lists "mini-batch 16", which
   reads as trajectories.
 - **Prompt length** 3,072 tokens instead of 2,000. The longest prompt with tools is 2,563 Qwen2.5 tokens.
