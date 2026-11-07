@@ -179,6 +179,13 @@ def truncate(text, limit=MAX_TOOL_RESPONSE_CHARS):
     return text if len(text) <= limit else text[:limit] + "...(truncated)"
 
 
+def utf8_safe(text):
+    """Replace lone UTF-16 surrogates with "?". The policy can write an escape such as "\\ud83d" into tool arguments;
+    json.loads turns it into a lone surrogate, the simulated tool echoes it back, and the tokenizer then raises
+    TypeError on the observation (job 38502104 died at step 130 this way)."""
+    return text.encode("utf-8", "replace").decode("utf-8")
+
+
 @dataclass
 class Episode:
     """One rollout of one task: feeds parsed turns to the environments, returns the next tool message or None."""
@@ -215,6 +222,8 @@ class Episode:
             except Exception as error:  # simulated tools raise on bad argument types
                 result = {"success": False, "message": f"{type(error).__name__}: {error}"}
             observation = truncate(json.dumps(result, ensure_ascii=False))
+        if observation is not None:
+            observation = utf8_safe(observation)
         if observation is not None and len(self.turns) >= max_turns:
             self.status, observation = "turn_limit", None
         self.observations.append(observation)

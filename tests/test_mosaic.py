@@ -380,6 +380,26 @@ class EvalTemplate(unittest.TestCase):
         self.assertEqual(path.read_text(), mosaic.make_template(self.tokenizer.chat_template))
 
 
+class LoneSurrogate(unittest.TestCase):
+    """Job 38502104: an argument escape like "\\ud83d" came back in a tool result, and the tokenizer raised on it."""
+
+    def test_observation_is_valid_utf8(self):
+        class Echo:
+            def has_tool(self, name):
+                return True
+
+            def call_tool(self, name, arguments):
+                return {"success": True, "echo": arguments["q"]}
+
+        episode = mosaic.Episode({"environments": [{"tools": ["echo"]}]}, [Echo()], [])
+        turn = mosaic.parse_turn('<think>x</think>\n<tool_call>\n{"name": "echo", "arguments": {"q": "a\\ud83d b"}}'
+                                 "\n</tool_call>")
+        self.assertEqual(turn.arguments["q"], "a\ud83d b")
+        observation = episode.step(turn)
+        observation.encode("utf-8")  # raises UnicodeEncodeError on a lone surrogate
+        self.assertIn('"a? b"', observation)
+
+
 class RolloutAnalysis(unittest.TestCase):
     """mosaic_rollouts.py on a hand-made dump shaped like verl's (<step>.jsonl, reward fields as columns)."""
 
