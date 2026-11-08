@@ -15,6 +15,8 @@
 #               data (trainset/derived/safeutil_train.parquet, safeutil.py build-data), agent loops (adds a single-turn
 #               loop), reward (safeutil_reward.py), judge preflight and 6,144-token prompts (APIGen-MT policies); runs go to
 #               results/<MODEL_TAG>_SafeUtil/. Name the job too: sbatch --job-name=safeutil-grpo ...
+#   ROLLOUT_N   rollouts per prompt: 4 for mosaic (the paper's group), 8 for safeutil, whose rewards are coarse enough
+#               that 4 rollouts often tie and the group gives GRPO no signal (half the groups in smoke run 38513183)
 #   TRAIN_FILE  default trainset/derived/mosaic_astb_train.parquet (python scripts/post-training/mosaic.py build-data)
 #   LR (1e-5 with LoRA, 1e-6 for full fine-tuning), LORA_RANK (16), LORA_ALPHA (32), N_GPUS (1)
 #   LORA_RANK=0 trains all weights, as the paper does: verl then loads a separate frozen reference copy, Adam states
@@ -28,7 +30,7 @@
 #               so they and verl_export/ go to scratch under <CKPT_ROOT>/<run folder name>; the last 2 are kept
 #               (1 with full fine-tuning).
 # Output: results/<MODEL_TAG>_MOSAIC/<run>-<jobid>/merged (checkpoints and verl_export/ in scratch), and rollouts/<step>.jsonl:
-# every training trajectory (16 per step) with its reward terms, refusal status, task id and fulfillable label, a few
+# every training trajectory (4 prompts x ROLLOUT_N per step) with its reward terms, refusal status, task id and fulfillable label, a few
 # hundred MB per epoch. Evaluate merged/ with
 # scripts/viking/qwen25_3b.sh eval <that dir>. Extra arguments are verl Hydra overrides, e.g. a smoke run:
 #   MODEL_PATH=results/qwen2.5-3B_LoRA/p00-123/merged sbatch scripts/viking/mosaic_grpo.sbatch trainer.total_training_steps=5
@@ -49,14 +51,15 @@ case "$METHOD" in
     mosaic)
         DEFAULT_TRAIN=trainset/derived/mosaic_astb_train.parquet; BUILD="scripts/post-training/mosaic.py build-data"
         LOOP_CONFIG=scripts/post-training/mosaic_agent_loop.yaml; REWARD=scripts/post-training/mosaic_reward.py
-        PREFLIGHT=scripts/post-training/mosaic_judge.py; PROMPT_LEN=3072 ;;
+        PREFLIGHT=scripts/post-training/mosaic_judge.py; PROMPT_LEN=3072; DEFAULT_N=4 ;;
     safeutil)
         DEFAULT_TRAIN=trainset/derived/safeutil_train.parquet; BUILD="scripts/post-training/safeutil.py build-data"
         LOOP_CONFIG=scripts/post-training/safeutil_agent_loop.yaml; REWARD=scripts/post-training/safeutil_reward.py
-        PREFLIGHT=scripts/post-training/safeutil_judge.py; PROMPT_LEN=6144 ;;
+        PREFLIGHT=scripts/post-training/safeutil_judge.py; PROMPT_LEN=6144; DEFAULT_N=8 ;;
     *) echo "METHOD must be mosaic or safeutil, not $METHOD" >&2; exit 1 ;;
 esac
 RESPONSE_LEN=5000
+ROLLOUT_N="${ROLLOUT_N:-$DEFAULT_N}"
 # Dynamic batching needs one whole sequence to fit a micro-batch: at least prompt + response tokens.
 ACTOR_TOKENS=$(( PROMPT_LEN + RESPONSE_LEN > 10240 ? PROMPT_LEN + RESPONSE_LEN : 10240 ))
 LOGPROB_TOKENS=$(( ACTOR_TOKENS > 16384 ? ACTOR_TOKENS : 16384 ))
@@ -131,7 +134,7 @@ unset ROCR_VISIBLE_DEVICES
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu="$LOGPROB_TOKENS" \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.mode=async \
-    actor_rollout_ref.rollout.n=4 \
+    actor_rollout_ref.rollout.n="$ROLLOUT_N" \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \

@@ -9,6 +9,10 @@ questions the console score curve cannot, because r_align always averages 1.5 wi
   python scripts/post-training/mosaic_rollouts.py results/qwen2.5-3B_MOSAIC/<run> [--window 50] [--json out.json]
                                                   [--examples 5]
 
+SafeUtil runs also get refusal rates per task kind and label (a policy that learns the data source instead of harm shows
+up there first) and the share of rollouts whose reasoning is the prompt's placeholder text or whose refusal tool call
+says the task is safe, when the run logs those fields.
+
 <run> is the run folder or its rollouts/ folder; MOSAIC and SafeUtil runs both work (SafeUtil's `refused` counts the
 refusal tool and refusal wording alike, MOSAIC's only the tool). Standard library only, so it runs in any env. Runs before f1a7815 have
 no rollout files.
@@ -82,6 +86,32 @@ def window_stats(rows, window):
     return out
 
 
+def kind_stats(rows, window):
+    """SafeUtil: refusal rate and mean r_task per step window, task kind and label."""
+    if "kind" not in rows[0]:
+        return []
+    buckets = defaultdict(list)
+    for row in rows:
+        buckets[((int(row["step"]) - 1) // window, row["kind"], label(row))].append(row)
+    return [dict(steps=f"{b * window + 1}-{(b + 1) * window}", kind=kind, label=name, n=len(part),
+                 refused=mean(float(r["refused"]) for r in part),
+                 task=mean(float(r.get("r_task", 0)) for r in part))
+            for (b, kind, name), part in sorted(buckets.items())]
+
+
+def degenerate_stats(rows, window):
+    """SafeUtil (after the reward fix): share of rollouts with placeholder reasoning and with unjustified refusals."""
+    if "placeholder" not in rows[0]:
+        return []
+    buckets = defaultdict(list)
+    for row in rows:
+        buckets[(int(row["step"]) - 1) // window].append(row)
+    return [dict(steps=f"{b * window + 1}-{(b + 1) * window}", n=len(part),
+                 placeholder=mean(float(r["placeholder"]) for r in part),
+                 refusal_unjustified=mean(float(r.get("refusal_unjustified", 0)) for r in part))
+            for b, part in sorted(buckets.items())]
+
+
 def refusal_gap(rows):
     """Within groups that mix refused and non-refused rollouts: mean reward of refused minus non-refused, per term."""
     groups = defaultdict(list)
@@ -121,7 +151,7 @@ def fmt(value, width=7):
     return f"{value:{width}.3f}" if isinstance(value, float) else str(value).rjust(width)
 
 
-def report(windows, gap, samples):
+def report(windows, gap, samples, kinds=(), degenerate=()):
     cols = [("steps", "steps", 9), ("n", "n", 5)] + [(t, SHORT[t], 7) for t in TERMS] + [("turns", "turns", 7),
             ("benign_refused", "ben.ref", 7), ("benign_refused_first_turn", "ben.ref1", 8),
             ("harmful_refused", "harm.ref", 8), ("harmful_refused_first_turn", "harm.ref1", 9),
@@ -136,6 +166,19 @@ def report(windows, gap, samples):
                               + [fmt(g["refused_scores_higher"], 8)]))
     lines.append("ref.best: share of those groups whose best rollout refused. A positive len gap means refusals "
                  "carry a larger length penalty.")
+    if kinds:
+        lines += ["", "Per task kind and label (refusal rate, mean r_task)",
+                  " ".join(h.rjust(w) for h, w in (("steps", 9), ("kind", 15), ("label", 8), ("n", 5), ("refused", 7),
+                                                  ("task", 7)))]
+        lines += [" ".join([e["steps"].rjust(9), e["kind"].rjust(15), e["label"].rjust(8), fmt(e["n"], 5),
+                            fmt(e["refused"]), fmt(e["task"])]) for e in kinds]
+    if degenerate:
+        lines += ["", "Degenerate outputs (share of rollouts)",
+                  " ".join(h.rjust(w) for h, w in (("steps", 9), ("n", 5), ("placeh.", 7), ("unjust.", 7)))]
+        lines += [" ".join([e["steps"].rjust(9), fmt(e["n"], 5), fmt(e["placeholder"]), fmt(e["refusal_unjustified"])])
+                  for e in degenerate]
+        lines.append("placeh.: a <think> / <safety_thoughts> that is the prompt's placeholder or under three words; "
+                     "unjust.: a refusal tool call whose reason says the task is safe or gives none.")
     for s in samples:
         lines += ["", f"--- refused benign task {s['task_id']} at step {s['step']} (score {s['score']:.3f}, "
                       f"{s['status']}) ---", s["output"]]
@@ -151,9 +194,11 @@ def main(argv=None):
     args = p.parse_args(argv)
     rows = load(args.run)
     windows, gap, samples = window_stats(rows, args.window), refusal_gap(rows), examples(rows, args.examples)
-    print(report(windows, gap, samples))
+    kinds, degenerate = kind_stats(rows, args.window), degenerate_stats(rows, args.window)
+    print(report(windows, gap, samples, kinds, degenerate))
     if args.json:
-        Path(args.json).write_text(json.dumps(dict(windows=windows, refusal_gap=gap, examples=samples), indent=1))
+        Path(args.json).write_text(json.dumps(dict(windows=windows, refusal_gap=gap, examples=samples, kinds=kinds,
+                                                   degenerate=degenerate), indent=1))
 
 
 if __name__ == "__main__":
