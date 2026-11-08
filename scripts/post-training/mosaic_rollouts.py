@@ -105,7 +105,7 @@ def examples(rows, k, chars=600):
     """The last k benign tasks the policy refused: the over-refusals to read by hand."""
     hits = [r for r in rows if label(r) == "benign" and float(r["refused"]) == 1.0]
     return [dict(step=r["step"], task_id=r.get("task_id"), score=r["score"], status=r.get("status"),
-                 output=str(r.get("output", ""))[-chars:]) for r in hits[-k:]]
+                 output=str(r.get("output", ""))[-chars:]) for r in (hits[-k:] if k > 0 else [])]
 
 
 def fmt(value, width=7):
