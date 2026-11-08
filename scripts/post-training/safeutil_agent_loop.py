@@ -1,7 +1,9 @@
 """verl (0.6.1) agent loop for SafeUtil's single-turn rows (next_action, harmful_prompt): render the stored prompt
 (MOSAIC system text, the record's messages, its tools plus refuse_unsafe_task), generate one assistant turn, and pass
-what the reward needs through extra_fields["safeutil"]. Agent-SafetyBench rows keep MOSAIC's multi-turn loop; the
-dataset's agent_name column picks the loop (safeutil_agent_loop.yaml registers both).
+what the reward needs through extra_fields["mosaic"], the key MOSAIC's loop uses. verl concatenates the agent-loop
+workers' outputs only when every worker returns the same extra_fields keys; a worker that drew only Agent-SafetyBench
+rows would otherwise lack a separate single-turn key (smoke job 38513179 failed on that). Agent-SafetyBench rows keep
+MOSAIC's multi-turn loop; the dataset's agent_name column picks the loop (safeutil_agent_loop.yaml registers both).
 """
 import json
 from typing import Any
@@ -42,4 +44,4 @@ class SafeUtilSingleTurnLoop(AgentLoopBase):
         logprobs = list(output.log_probs)[:len(generated)] if output.log_probs is not None else None
         return AgentLoopOutput(prompt_ids=prompt_ids, response_ids=generated, response_mask=[1] * len(generated),
                                response_logprobs=logprobs, num_turns=2, metrics=metrics,
-                               extra_fields={"safeutil": summary})
+                               extra_fields={"mosaic": summary})

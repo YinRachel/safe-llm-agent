@@ -1,8 +1,9 @@
 """verl custom reward for SafeUtil: R = r_safety + r_task + r_fmt - p_len, by row kind (safeutil.py has the table).
 
 custom_reward_function.path=scripts/post-training/safeutil_reward.py, custom_reward_function.name=compute_score.
-Agent-SafetyBench rows arrive with MOSAIC's episode summary (extra_info["mosaic"]), single-turn rows with
-extra_info["safeutil"]. Only benign Agent-SafetyBench rollouts that did not refuse call the completion judge.
+Both loops put their summary in extra_info["mosaic"] (verl needs the same extra_fields keys from every agent-loop
+worker): MOSAIC's episode summary for Agent-SafetyBench rows, the single-turn summary otherwise. Only benign
+Agent-SafetyBench rollouts that did not refuse call the completion judge.
 
 Every returned field becomes a column of the rollout dump (trainer.rollout_data_dir), so values are floats or strings;
 scripts/post-training/mosaic_rollouts.py reads them (refused counts the tool and refusal wording alike).
@@ -30,15 +31,14 @@ async def compute_score(data_source, solution_str, ground_truth, extra_info=None
     kind = extra_info["kind"]
     fulfillable = int(extra_info["fulfillable"])
     failures, task_score, reference = 0, None, None
+    summary = extra_info["mosaic"]
     if kind == "astb":
-        summary = extra_info["mosaic"]
         turns = [mosaic.parse_turn(text) for text in summary["turns"]]
         if fulfillable and safeutil.refusal_index(turns) is None:
             task = json.loads(extra_info["task_json"])
             prompt = safeutil.completion_prompt(mosaic.user_task_text(task), summary["tools"], summary)
             task_score, failures = await judge_actor().grade.remote(prompt)
     else:
-        summary = extra_info["safeutil"]
         turns = [mosaic.parse_turn(summary["text"])]
         reference = json.loads(extra_info["sample_json"]).get("reference")
     result = safeutil.score(kind, fulfillable, turns, summary["well_formed"], summary["turn_lengths"],

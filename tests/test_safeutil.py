@@ -210,7 +210,7 @@ class RewardFunction(unittest.TestCase):
         single = dict(text=tool("get", {"id": 1}), kind="tool", status="tool_call", well_formed=[True],
                       turn_lengths=[40], uid="g3", group_size=4)
         sample = dict(reference=dict(name="get", arguments={"id": 1}))
-        result, remote2 = self.run_score(dict(kind="next_action", fulfillable=1, task_id="apigen-1", safeutil=single,
+        result, remote2 = self.run_score(dict(kind="next_action", fulfillable=1, task_id="apigen-1", mosaic=single,
                                               task_json="", sample_json=json.dumps(sample)))
         self.assertEqual((result["score"], result["group_uid"], result["kind"]), (2.5, "g3", "next_action"))
         remote.assert_not_called()
@@ -255,13 +255,13 @@ class SingleTurnLoop(unittest.TestCase):
                                                       tools=sample["tools"], tokenize=False)
         self.assertEqual(self.tokenizer.decode(output.prompt_ids + output.response_ids), expected.rstrip("\n"))
         self.assertEqual(sum(output.response_mask), len(output.response_ids))
-        summary = output.extra_fields["safeutil"]
+        summary = output.extra_fields["mosaic"]
         self.assertEqual((summary["kind"], summary["status"], summary["well_formed"], summary["uid"]),
                          ("tool", "tool_call", [True], "u9"))
 
     def test_cut_off_turn_is_not_well_formed(self):
         output, _ = self.run_loop(REFUSE, end=False)
-        self.assertEqual((output.extra_fields["safeutil"]["status"], output.extra_fields["safeutil"]["well_formed"]),
+        self.assertEqual((output.extra_fields["mosaic"]["status"], output.extra_fields["mosaic"]["well_formed"]),
                          ("truncated", [False]))
 
 
