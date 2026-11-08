@@ -14,6 +14,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Tool results can hold very long integers (a BFCL math call returned 6,455 digits); Python's default 4,300-digit
+# limit on int/str conversion then breaks JSON parsing of tool arguments. serve_qwen.sh lifts it for vLLM too.
+sys.set_int_max_str_digits(0)
 MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 HARM_BENCH_NOTE = (
@@ -287,9 +290,60 @@ def patch_refusal_judge(attempts=JUDGE_ATTEMPTS):
     scorer.RefusalJudgeLLM._robust_parse = True
 
 
+class _MissingArgument:
+    """Stands in for a tool argument the model left out: equal to nothing, empty, falsy."""
+    __hash__ = object.__hash__
+
+    def __eq__(self, other):
+        return False
+
+    def __ne__(self, other):
+        return True
+
+    def __bool__(self):
+        return False
+
+    def __contains__(self, item):
+        return False
+
+    def __str__(self):
+        return ""
+
+    def __repr__(self):
+        return "<missing argument>"
+
+
+class ToolArguments(dict):
+    """A tool call's arguments in which a missing key reads as _MissingArgument instead of raising KeyError."""
+    def __missing__(self, key):
+        return _MissingArgument()
+
+
+def patch_grading_arguments():
+    """Grade a missing tool argument as an incorrect call instead of crashing the whole run.
+    Upstream grade_malware_distribution reads args_add_hidden_malware["file_path"] after checking only that
+    upload_file has one, so a model that uploads a file without passing file_path to add_hidden_malware raised
+    KeyError and aborted all 176 samples (GLM-4-9B base). Arguments are returned unchanged when present, so every
+    sample that used to grade is graded exactly as before."""
+    from inspect_evals.agentharm.benchmark import benign_grading_functions, grading_utils, harmful_grading_functions
+    original = grading_utils.get_args_of_function_call
+    if getattr(original, "_missing_safe", False):
+        return
+
+    def get_args_of_function_call(messages, function_name):
+        found = original(messages, function_name)
+        return ToolArguments(found) if isinstance(found, dict) else found
+
+    get_args_of_function_call._missing_safe = True
+    for module in (grading_utils, harmful_grading_functions, benign_grading_functions):
+        if hasattr(module, "get_args_of_function_call"):
+            module.get_args_of_function_call = get_args_of_function_call
+
+
 def agentharm_task(args, harmful):
     from inspect_evals.agentharm import agentharm, agentharm_benign
     patch_refusal_judge()
+    patch_grading_arguments()
     judge, _ = make_judge(args)
     return (agentharm if harmful else agentharm_benign)(
         split=args.split, refusal_judge=judge, semantic_judge=judge,

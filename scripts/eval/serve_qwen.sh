@@ -27,6 +27,9 @@ tool_parser() {
 parser="${TOOL_CALL_PARSER:-$(tool_parser "$MODEL")}"
 if [[ "$parser" != hermes ]]; then args+=(--tool-parser-plugin "$(dirname "$0")/tool_parsers.py"); fi
 echo "Tool-call parser: $parser" >&2
+# vLLM parses tool-call arguments in the chat history as JSON; lift Python's 4,300-digit int limit so a long number
+# from a tool (a BFCL math result had 6,455 digits) does not turn the request into a 400 that aborts the benchmark.
+export PYTHONINTMAXSTRDIGITS=0
 exec vllm serve "$MODEL" \
   --served-model-name "${SERVED_MODEL_NAME:-Qwen/Qwen3-4B-Instruct-2507}" \
   --host 127.0.0.1 --port "${PORT:-8000}" \
