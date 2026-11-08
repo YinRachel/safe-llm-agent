@@ -81,4 +81,11 @@ counts both forms of refusal. Evaluate `merged/` as for MOSAIC, bare and with `S
   Agent-SafetyBench (303 benign), 800 next_action (400 APIGen-MT from 2,997 eligible, 400 AgentAlign from 9,282) and 400
   harmful_prompt (50 per category from 4,556); 1,103 benign and 897 harmful in all. next_action prompts are 797–6,132
   tokens (median 4,472). APIGen targets follow 2.9 earlier assistant turns on average (up to 10), AgentAlign 0.7.
-- **Not yet run:** verl with mixed agent loops in one batch, the live completion judge, and a training run.
+- **Smoke run 38513183** (5 steps, full fine-tuning from p00, gpuplus H100, 2026-11-08) completed and exported
+  `merged/`: both agent loops in one batch, the live judge (7 benign Agent-SafetyBench rollouts graded, no failures),
+  the rollout dump, 16–22 s per step after the first, peak GPU 94 GB, host RAM 125 GB (Slurm MaxRSS; verl's
+  `cpu_memory_used_gb` counts the whole shared node). Longest prompt 5,530 tokens.
+- **Watch in the full run:** the p00 starting model almost never refuses (3% of 36 harmful rollouts) and rarely writes
+  every turn in the MOSAIC format (r_fmt 0.03). A group whose 4 rollouts all comply scores 0 throughout and gives GRPO
+  no signal: 10 of the smoke run's 20 groups had identical rewards. If harmful refusals do not rise within the first
+  ~100 steps, sample more rollouts per prompt or add a graded safety term.
