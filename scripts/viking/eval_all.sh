@@ -73,7 +73,8 @@ submit() {  # benchmark-label sbatch-script [script args...]
 }
 submit agentharm_benign scripts/viking/agentharm.sbatch
 submit agentharm_harmful scripts/viking/agent_benchmarks.sbatch agentharm-harmful
-submit bfcl_multiturn scripts/viking/agent_benchmarks.sbatch bfcl-multiturn
+# BFCL multi-turn took 12+ h on Llama-3.1-8B (510/800 samples at the 12 h default); BFCL_TIME overrides.
+submit bfcl_multiturn --time="${BFCL_TIME:-24:00:00}" scripts/viking/agent_benchmarks.sbatch bfcl-multiturn
 submit asb scripts/viking/agent_benchmarks.sbatch asb
 submit agent_safetybench scripts/viking/agent_benchmarks.sbatch agent-safetybench
 submit tau_bench scripts/viking/agent_benchmarks.sbatch tau-bench

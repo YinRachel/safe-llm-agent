@@ -55,6 +55,8 @@ class EvalAllTests(unittest.TestCase):
         self.assertIn("scripts/viking/agentharm.sbatch", calls[0])
         for bench in ("agentharm-harmful", "asb", "agent-safetybench", "bfcl-multiturn", "tau-bench"):
             self.assertTrue(any(f"agent_benchmarks.sbatch {bench}" in c for c in calls), bench)
+        self.assertTrue(any("--time=24:00:00 scripts/viking/agent_benchmarks.sbatch bfcl-multiturn" in c for c in calls))
+        self.assertEqual(sum("--time=" in c for c in calls), 1)
         harmbench = calls[6].split("\n")[0]
         model = str((work / "results/qwen4B_LoRA/p10-1/merged").resolve())
         self.assertIn(f"--model {model}", harmbench)
