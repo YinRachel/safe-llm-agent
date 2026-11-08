@@ -53,7 +53,7 @@ Version 2 makes these changes. The tables below describe it.
 |---|---|---|---|---|
 | `astb` | 1,000 | 500 benign, 500 harmful (`--astb-benign-share 0.5`; 735 of its 2,000 tasks are benign) | Agent-SafetyBench | multi-turn, MOSAIC's loop and environments |
 | `next_action` | 400 | benign | unused APIGen-MT dialogs, cut before one reference tool call (`--apigen-share 1.0`) | one turn |
-| `benign_prompt` | 300 | benign | unused AgentAlign benign instructions, cut before their first tool call, balanced by sub-category | one turn |
+| `benign_prompt` | 300 | benign | unused AgentAlign benign instructions, cut before their first tool call, in the trainset's seeded order (AgentAlign gives benign records no sub-category) | one turn |
 | `harmful_prompt` | 300 | harmful | `defense_pool.jsonl` AgentAlign harmful instructions, balanced by category | one turn |
 
 - **benign_prompt and harmful_prompt look identical.** Both have MOSAIC's text, the generic agent system prompt, one
@@ -139,4 +139,6 @@ counts both forms of refusal. Evaluate `merged/` as for MOSAIC, bare and with `S
 - **Version 1 full run 38513278** (500 steps, 2 h 34 min) and a 150-step rerun 38514645 (the step-150 weights of the
   full run were pruned) completed. Evaluations were submitted for both, bare and with `SCAFFOLD=mosaic`. The collapse it
   showed is described under Version 2. **Version 2 is tested offline only:** its data has not been built and it has
-  not been trained.
+  not been trained. Its data was built on Viking on 2026-11-08: 2,000 rows, Agent-SafetyBench 500 / 500, 400 APIGen-MT,
+  300 benign_prompt (of 8,946 eligible) and 300 harmful_prompt (37–38 per category). Version 1's parquet is kept as
+  `trainset/derived/safeutil_train.v1.parquet` with its manifest.
