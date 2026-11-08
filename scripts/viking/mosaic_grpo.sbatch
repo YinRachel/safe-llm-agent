@@ -11,6 +11,10 @@
 # MOSAIC GRPO (Agarwal et al., ICML 2026) on Agent-SafetyBench with the pairwise Runware judge; see docs/mosaic.md.
 #   MODEL_PATH  merged model to start from (required), e.g. results/qwen2.5-3B_LoRA/p00-123/merged. With LoRA, verl's
 #               reference policy is this model with the adapter off, so the KL anchor is the SFT model.
+#   METHOD      mosaic (default) or safeutil: SafeUtil GRPO (docs/safeutil.md) uses the same verl setup with its own
+#               data (trainset/derived/safeutil_train.parquet, safeutil.py build-data), agent loops (adds a single-turn
+#               loop), reward (safeutil_reward.py), judge preflight and 6,144-token prompts (APIGen-MT policies); runs go to
+#               results/<MODEL_TAG>_SafeUtil/. Name the job too: sbatch --job-name=safeutil-grpo ...
 #   TRAIN_FILE  default trainset/derived/mosaic_astb_train.parquet (python scripts/post-training/mosaic.py build-data)
 #   LR (1e-5 with LoRA, 1e-6 for full fine-tuning), LORA_RANK (16), LORA_ALPHA (32), N_GPUS (1)
 #   LORA_RANK=0 trains all weights, as the paper does: verl then loads a separate frozen reference copy, Adam states
@@ -40,8 +44,24 @@ TRAIN_PYTHON="${TRAIN_PYTHON:-$PWD/.venv-serve-cu128/bin/python}"
 "$TRAIN_PYTHON" -c 'import torch, flash_attn_2_cuda' || {
     echo "flash-attn missing from $TRAIN_PYTHON: sbatch scripts/viking/build_flash_attn.job" >&2; exit 1; }
 : "${MODEL_PATH:?export MODEL_PATH=<merged model dir>}"
-TRAIN_FILE="${TRAIN_FILE:-trainset/derived/mosaic_astb_train.parquet}"
-[[ -f "$TRAIN_FILE" ]] || { echo "Missing $TRAIN_FILE (python scripts/post-training/mosaic.py build-data)" >&2; exit 1; }
+METHOD="${METHOD:-mosaic}"
+case "$METHOD" in
+    mosaic)
+        DEFAULT_TRAIN=trainset/derived/mosaic_astb_train.parquet; BUILD="scripts/post-training/mosaic.py build-data"
+        LOOP_CONFIG=scripts/post-training/mosaic_agent_loop.yaml; REWARD=scripts/post-training/mosaic_reward.py
+        PREFLIGHT=scripts/post-training/mosaic_judge.py; PROMPT_LEN=3072 ;;
+    safeutil)
+        DEFAULT_TRAIN=trainset/derived/safeutil_train.parquet; BUILD="scripts/post-training/safeutil.py build-data"
+        LOOP_CONFIG=scripts/post-training/safeutil_agent_loop.yaml; REWARD=scripts/post-training/safeutil_reward.py
+        PREFLIGHT=scripts/post-training/safeutil_judge.py; PROMPT_LEN=6144 ;;
+    *) echo "METHOD must be mosaic or safeutil, not $METHOD" >&2; exit 1 ;;
+esac
+RESPONSE_LEN=5000
+# Dynamic batching needs one whole sequence to fit a micro-batch: at least prompt + response tokens.
+ACTOR_TOKENS=$(( PROMPT_LEN + RESPONSE_LEN > 10240 ? PROMPT_LEN + RESPONSE_LEN : 10240 ))
+LOGPROB_TOKENS=$(( ACTOR_TOKENS > 16384 ? ACTOR_TOKENS : 16384 ))
+TRAIN_FILE="${TRAIN_FILE:-$DEFAULT_TRAIN}"
+[[ -f "$TRAIN_FILE" ]] || { echo "Missing $TRAIN_FILE (python $BUILD)" >&2; exit 1; }
 LORA_RANK="${LORA_RANK:-16}"
 if (( LORA_RANK > 0 )); then
     LR="${LR:-1e-5}"
@@ -59,7 +79,7 @@ N_GPUS="${N_GPUS:-1}"
 source scripts/viking/results_dir.sh
 run="${MODEL_PATH%/}"
 [[ "$(basename "$run")" == merged ]] && run="$(dirname "$run")"
-OUT="${OUT:-$(results_group mosaic "$MODEL_PATH")/$(basename "$run")${suffix}-${SLURM_JOB_ID}}"
+OUT="${OUT:-$(results_group "$METHOD" "$MODEL_PATH")/$(basename "$run")${suffix}-${SLURM_JOB_ID}}"
 OUT="${OUT%/}"
 CKPT="${CKPT_ROOT:-/mnt/scratch/users/$USER/mosaic-checkpoints}/$(basename "$OUT")"
 mkdir -p "$OUT" "$CKPT"
@@ -68,8 +88,9 @@ export ASTB_REPO="${ASTB_REPO:-$PWD/third_party/Agent-SafetyBench}"
 # Slurm exports ROCR_VISIBLE_DEVICES (AMD) next to CUDA_VISIBLE_DEVICES; verl's workers refuse to start with both.
 unset ROCR_VISIBLE_DEVICES
 
-# One live pairwise call before any GPU work: an immediate refusal must beat compliance in both orders.
-"$TRAIN_PYTHON" scripts/post-training/mosaic_judge.py
+# Live judge calls before any GPU work (MOSAIC: a refusal must beat compliance in both orders; SafeUtil: a finished
+# benign task must grade 2 and a refusal 0).
+"$TRAIN_PYTHON" "$PREFLIGHT"
 
 # App. J: 4 prompts x 4 rollouts per step, one PPO update per step (mini-batch = the 16 trajectories), temperature 1.0,
 # 2,000-token prompts in the paper (3,072 here: the longest Agent-SafetyBench prompt with tools is 2,563), 5,000 response
@@ -82,8 +103,8 @@ unset ROCR_VISIBLE_DEVICES
     data.train_files="$TRAIN_FILE" \
     data.val_files="$TRAIN_FILE" \
     data.train_batch_size=4 \
-    data.max_prompt_length=3072 \
-    data.max_response_length=5000 \
+    data.max_prompt_length="$PROMPT_LEN" \
+    data.max_response_length="$RESPONSE_LEN" \
     data.filter_overlong_prompts=False \
     data.truncation=error \
     data.return_raw_chat=True \
@@ -97,30 +118,30 @@ unset ROCR_VISIBLE_DEVICES
     actor_rollout_ref.actor.optim.lr="$LR" \
     actor_rollout_ref.actor.ppo_mini_batch_size=4 \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=10240 \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu="$ACTOR_TOKENS" \
     actor_rollout_ref.actor.entropy_from_logits_with_chunking=True \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=True \
-    actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=16384 \
+    actor_rollout_ref.ref.log_prob_max_token_len_per_gpu="$LOGPROB_TOKENS" \
     actor_rollout_ref.ref.entropy_from_logits_with_chunking=True \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=True \
-    actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=16384 \
+    actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu="$LOGPROB_TOKENS" \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.mode=async \
     actor_rollout_ref.rollout.n=4 \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
-    actor_rollout_ref.rollout.max_model_len=8072 \
+    actor_rollout_ref.rollout.max_model_len="$((PROMPT_LEN + RESPONSE_LEN))" \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.layered_summon=True \
     actor_rollout_ref.rollout.multi_turn.max_assistant_turns=20 \
-    actor_rollout_ref.rollout.agent.agent_loop_config_path=scripts/post-training/mosaic_agent_loop.yaml \
+    actor_rollout_ref.rollout.agent.agent_loop_config_path="$LOOP_CONFIG" \
     actor_rollout_ref.rollout.agent.num_workers=4 \
-    custom_reward_function.path=scripts/post-training/mosaic_reward.py \
+    custom_reward_function.path="$REWARD" \
     custom_reward_function.name=compute_score \
     reward_model.reward_manager=naive \
     trainer.n_gpus_per_node="$N_GPUS" \
@@ -130,7 +151,7 @@ unset ROCR_VISIBLE_DEVICES
     trainer.test_freq=-1 \
     trainer.val_before_train=False \
     trainer.logger='["console"]' \
-    trainer.project_name=mosaic \
+    trainer.project_name="$METHOD" \
     trainer.experiment_name="$(basename "$OUT")" \
     trainer.default_local_dir="$CKPT/checkpoints" \
     trainer.rollout_data_dir="$OUT/rollouts" \
@@ -142,4 +163,4 @@ step="$(cat "$CKPT/checkpoints/latest_checkpointed_iteration.txt")"
     --local_dir "$CKPT/checkpoints/global_step_$step/actor" --target_dir "$CKPT/verl_export"
 "$TRAIN_PYTHON" scripts/post-training/mosaic.py export --export "$CKPT/verl_export" --lora-alpha "$LORA_ALPHA" \
     --output "$OUT/merged"
-echo "MOSAIC model: $OUT/merged (step $step)"
+echo "$METHOD model: $OUT/merged (step $step)"

@@ -9,7 +9,8 @@ questions the console score curve cannot, because r_align always averages 1.5 wi
   python scripts/post-training/mosaic_rollouts.py results/qwen2.5-3B_MOSAIC/<run> [--window 50] [--json out.json]
                                                   [--examples 5]
 
-<run> is the run folder or its rollouts/ folder. Standard library only, so it runs in any env. Runs before f1a7815 have
+<run> is the run folder or its rollouts/ folder; MOSAIC and SafeUtil runs both work (SafeUtil's `refused` counts the
+refusal tool and refusal wording alike, MOSAIC's only the tool). Standard library only, so it runs in any env. Runs before f1a7815 have
 no rollout files.
 """
 import argparse
@@ -19,8 +20,12 @@ from pathlib import Path
 import sys
 
 LABELS = {1.0: "benign", 0.0: "harmful"}
-TERMS = ("score", "r_align", "r_fmt", "p_len")
-REQUIRED = ("score", "r_align", "r_fmt", "p_len", "refused", "fulfillable", "group_uid")
+# Reward terms in the order they are reported; a run logs MOSAIC's (r_align) or SafeUtil's (r_safety, r_task) and the
+# report keeps the ones present.
+ALL_TERMS = ("score", "r_align", "r_safety", "r_task", "r_fmt", "p_len")
+TERMS = ALL_TERMS
+SHORT = dict(score="score", r_align="align", r_safety="safety", r_task="task", r_fmt="fmt", p_len="len")
+REQUIRED = ("score", "r_fmt", "p_len", "refused", "fulfillable", "group_uid")
 
 
 def load(path):
@@ -41,6 +46,8 @@ def load(path):
                 sys.exit(f"{f}:{n} lacks {missing}; this run predates the rollout fields of f1a7815")
             row.setdefault("step", int(f.stem) if f.stem.isdigit() else 0)
             rows.append(row)
+    global TERMS
+    TERMS = tuple(t for t in ALL_TERMS if t in rows[0])
     return rows
 
 
@@ -115,8 +122,7 @@ def fmt(value, width=7):
 
 
 def report(windows, gap, samples):
-    cols = [("steps", "steps", 9), ("n", "n", 5), ("score", "score", 7), ("r_align", "align", 7),
-            ("r_fmt", "fmt", 7), ("p_len", "len", 7), ("turns", "turns", 7),
+    cols = [("steps", "steps", 9), ("n", "n", 5)] + [(t, SHORT[t], 7) for t in TERMS] + [("turns", "turns", 7),
             ("benign_refused", "ben.ref", 7), ("benign_refused_first_turn", "ben.ref1", 8),
             ("harmful_refused", "harm.ref", 8), ("harmful_refused_first_turn", "harm.ref1", 9),
             ("truncated", "trunc", 7), ("judge_failures", "j.fail", 6)]
@@ -124,11 +130,10 @@ def report(windows, gap, samples):
              " ".join(h.rjust(w) for _, h, w in cols)]
     lines += [" ".join(fmt(e[k], w) for k, _, w in cols) for e in windows]
     lines += ["", "Refused minus not-refused, within groups that have both (positive = refusing pays more)",
-              " ".join(h.rjust(w) for h, w in (("label", 8), ("groups", 7), ("score", 7), ("align", 7),
-                                               ("fmt", 7), ("len", 7), ("ref.best", 8)))]
+              " ".join(["label".rjust(8), "groups".rjust(7)] + [SHORT[t].rjust(7) for t in TERMS] + ["ref.best".rjust(8)])]
     for name, g in gap.items():
-        lines.append(" ".join([name.rjust(8), fmt(g["mixed_groups"]), fmt(g["gap_score"]), fmt(g["gap_r_align"]),
-                               fmt(g["gap_r_fmt"]), fmt(g["gap_p_len"]), fmt(g["refused_scores_higher"], 8)]))
+        lines.append(" ".join([name.rjust(8), fmt(g["mixed_groups"])] + [fmt(g[f"gap_{t}"]) for t in TERMS]
+                              + [fmt(g["refused_scores_higher"], 8)]))
     lines.append("ref.best: share of those groups whose best rollout refused. A positive len gap means refusals "
                  "carry a larger length penalty.")
     for s in samples:

@@ -1,0 +1,7 @@
+# verl agent-loop registry for SafeUtil (actor_rollout_ref.rollout.agent.agent_loop_config_path). The dataset's
+# agent_name column picks the loop: Agent-SafetyBench rows run MOSAIC's multi-turn loop, next_action and
+# harmful_prompt rows one turn.
+- name: mosaic_agent
+  _target_: mosaic_agent_loop.MosaicAgentLoop
+- name: safeutil_single
+  _target_: safeutil_agent_loop.SafeUtilSingleTurnLoop
