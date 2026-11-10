@@ -40,6 +40,9 @@
 #               merged/ (8-19 GB) is written to <MERGED_ROOT>/<results group>/<run folder name>/merged and linked into
 #               the run folder, so home stays small. Longship is read-only on compute nodes, so moving merged models or
 #               checkpoints there is done from a login node. verl_export/ is deleted after the merge.
+#   KEEP_CKPT   0 (default with LORA_RANK=0): delete the run's checkpoints once merged/ is exported. A 4-9B full
+#               fine-tuning checkpoint is 47-110 GB against scratch's 400 GB project quota. Set 1 to keep them (to
+#               resume, or to export an earlier step with export_checkpoint.sbatch).
 # Output: results/<MODEL_TAG>_MOSAIC/<run>-<jobid>/merged (checkpoints and verl_export/ in scratch), and rollouts/<step>.jsonl:
 # every training trajectory (4 prompts x ROLLOUT_N per step) with its reward terms, refusal status, task id and fulfillable label, a few
 # hundred MB per epoch. Evaluate merged/ with
@@ -192,4 +195,7 @@ ln -sfn "$MERGED" "$OUT/merged"
 # The stop tokens vLLM serves with (GLM-4 ends turns on <|user|> / <|observation|>) come from generation_config.json.
 if [[ -f "$MODEL_PATH/generation_config.json" ]]; then cp "$MODEL_PATH/generation_config.json" "$MERGED/"; fi
 echo "$METHOD model: $OUT/merged (step $step)"
-rm -rf "$CKPT/verl_export"
+rm -rf -- "${CKPT:?}/verl_export"
+if [[ "${KEEP_CKPT:-$(( LORA_RANK > 0 ))}" == 0 ]]; then
+    rm -rf -- "${CKPT:?}/checkpoints"; echo "Deleted $CKPT/checkpoints (KEEP_CKPT=1 keeps them)"
+fi
