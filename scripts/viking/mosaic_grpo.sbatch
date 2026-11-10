@@ -36,12 +36,10 @@
 #               LoRA (~14 GB each, ~37 GB with full fine-tuning optimizer state), too big for the 100 GB home quota,
 #               so they and verl_export/ go to scratch under <CKPT_ROOT>/<run folder name>; the last 2 are kept
 #               (1 with full fine-tuning).
-#   MERGED_ROOT default /mnt/longship/users/$USER/merged-archive. merged/ (8-19 GB) is written to
-#               <MERGED_ROOT>/<results group>/<run folder name>/merged and linked into the run folder, so home stays small.
-#   ARCHIVE_ROOT default /mnt/longship/users/$USER/mosaic-archive. After the export the checkpoints move to
-#               <ARCHIVE_ROOT>/<run folder name>-checkpoints (removed from scratch only once every file arrived with
-#               its size) and verl_export/ is deleted: a 4-9B full fine-tuning checkpoint is 47-110 GB and scratch's
-#               project quota is 400 GB. ARCHIVE_ROOT= (empty) leaves them on scratch, e.g. to resume the run later.
+#   MERGED_ROOT default /mnt/scratch/users/$USER/safe-llm-agent/results (as train_lora.sbatch's SCRATCH_OUTPUT_ROOT).
+#               merged/ (8-19 GB) is written to <MERGED_ROOT>/<results group>/<run folder name>/merged and linked into
+#               the run folder, so home stays small. Longship is read-only on compute nodes, so moving merged models or
+#               checkpoints there is done from a login node. verl_export/ is deleted after the merge.
 # Output: results/<MODEL_TAG>_MOSAIC/<run>-<jobid>/merged (checkpoints and verl_export/ in scratch), and rollouts/<step>.jsonl:
 # every training trajectory (4 prompts x ROLLOUT_N per step) with its reward terms, refusal status, task id and fulfillable label, a few
 # hundred MB per epoch. Evaluate merged/ with
@@ -108,7 +106,7 @@ run="${MODEL_PATH%/}"
 OUT="${OUT:-$(results_group "$METHOD" "$MODEL_PATH")/$(basename "$run")${suffix}-${SLURM_JOB_ID}}"
 OUT="${OUT%/}"
 CKPT="${CKPT_ROOT:-/mnt/scratch/users/$USER/mosaic-checkpoints}/$(basename "$OUT")"
-MERGED="${MERGED_ROOT:-/mnt/longship/users/$USER/merged-archive}/$(basename "$(dirname "$OUT")")/$(basename "$OUT")/merged"
+MERGED="${MERGED_ROOT:-/mnt/scratch/users/$USER/safe-llm-agent/results}/$(basename "$(dirname "$OUT")")/$(basename "$OUT")/merged"
 mkdir -p "$OUT" "$CKPT" "$(dirname "$MERGED")"
 export PYTHONPATH="$PWD/scripts/post-training:$PWD/scripts/eval${PYTHONPATH:+:$PYTHONPATH}"
 export ASTB_REPO="${ASTB_REPO:-$PWD/third_party/Agent-SafetyBench}"
@@ -195,15 +193,3 @@ ln -sfn "$MERGED" "$OUT/merged"
 if [[ -f "$MODEL_PATH/generation_config.json" ]]; then cp "$MODEL_PATH/generation_config.json" "$MERGED/"; fi
 echo "$METHOD model: $OUT/merged (step $step)"
 rm -rf "$CKPT/verl_export"
-ARCHIVE_ROOT="${ARCHIVE_ROOT-/mnt/longship/users/$USER/mosaic-archive}"
-if [[ -n "$ARCHIVE_ROOT" ]]; then
-    dest="$ARCHIVE_ROOT/$(basename "$OUT")-checkpoints"
-    mkdir -p "$dest"
-    rsync -a "$CKPT/checkpoints/" "$dest/"
-    if diff <(cd "$CKPT/checkpoints" && find . -type f -printf '%p %s\n' | sort) \
-            <(cd "$dest" && find . -type f -printf '%p %s\n' | sort) >/dev/null; then
-        rm -rf "$CKPT"; echo "Checkpoints archived to $dest"
-    else
-        echo "Checkpoint archive $dest incomplete; $CKPT left on scratch" >&2
-    fi
-fi
