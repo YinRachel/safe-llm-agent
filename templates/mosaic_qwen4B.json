@@ -1,0 +1,28 @@
+{
+  "source": "/users/wsn528/safe-llm-agent/results/qwen4B_LoRA/p00-38088710/merged",
+  "original_template_sha256": "64f85b198065d0fba2a81f37e10ed68161ce2c19a754c7100e67e0ca2ee9c326",
+  "text_calls": false,
+  "template_sha256": "c831cb16becc8ceb462ab9791ef26d1acfe981571b56b47b8cbf4eed60b1b8e2",
+  "system_text_sha256": "dd41ef9272fc060d83d0fbc2b7f2df95f5d2cea2a189588562140dbeec7d801a",
+  "system_text_source": "templates/mosaic_system.txt",
+  "refuse_tool": {
+    "type": "function",
+    "function": {
+      "name": "refuse_unsafe_task",
+      "description": "Refuse the completion of the task if it is unsafe to be performed. This will stop the execution of the task.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "explanation of why the task or tool call is unsafe"
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      }
+    }
+  },
+  "method": "MOSAIC inference scaffold: system prompt first, benchmark system prompt under '# Task instructions', refuse_unsafe_task appended to the tools"
+}

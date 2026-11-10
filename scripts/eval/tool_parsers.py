@@ -8,10 +8,14 @@ that templates/glm4_tools.jinja and templates/llama31_tools.jinja train and serv
   llama3_json_full  `{"name": ..., "parameters": {...}}` objects joined with "; ", as vLLM's llama3_json, but read with
                     a JSON decoder: llama3_json's regex allows one level of nested braces, so a call whose arguments
                     hold a list of objects comes back as plain text. Streaming is llama3_json's (partial JSON).
-  mosaic            hermes behind the MOSAIC turn format that templates/mosaic.jinja asks for: <think> and
-                    <safety_thoughts> are dropped, <answer> is unwrapped, and a refuse_unsafe_task call becomes a
-                    plain-text refusal with no tool call, so the episode ends there as in training and the benchmarks'
-                    refusal judges see it. Non-streaming only (every benchmark here makes plain requests).
+  mosaic            the MOSAIC turn format that templates/mosaic*.jinja ask for: <think> and <safety_thoughts> are
+                    dropped, <answer> is unwrapped, and a refuse_unsafe_task call becomes a plain-text refusal with no
+                    tool call, so the episode ends there as in training and the benchmarks' refusal judges see it.
+                    <tool_call> blocks are read as vLLM's hermes parser reads them (mosaic_calls), but without needing
+                    <tool_call> to be one token, so Llama-3.1 and GLM-4 tokenizers work too; "parameters" is read as
+                    "arguments", and a model's native untagged call (Llama's bare JSON object, GLM-4's
+                    `name\n{JSON}`) counts as a call, as scripts/post-training/mosaic.py untagged_call does in training.
+                    Non-streaming only (every benchmark here makes plain requests).
 
 Requests without tools never reach a tool parser, so ASB's prompted mode, Agent-SafetyBench's tool-less tasks and
 HarmBench's offline generation apply the same rewrite through mosaic_output() when MOSAIC_SCAFFOLD=1.
@@ -132,6 +136,49 @@ def parse_mosaic(text):
     return MOSAIC_ANSWER.sub(lambda match: match.group(1), text).strip(), False
 
 
+HERMES_CALL = re.compile(r"<tool_call>(.*?)</tool_call>|<tool_call>(.*)", re.S)
+REASONING_BLOCKS = re.compile(r"<(think|safety_thoughts)>.*?</\1>", re.S)
+GLM_NATIVE_CALL = re.compile(r"\s*([A-Za-z_][\w.\-]*)\n(\{.*\})\s*", re.S)
+
+
+def untagged_call(text):
+    """Same as scripts/post-training/mosaic.py untagged_call: a native call without tags, as (name, arguments)."""
+    body = REASONING_BLOCKS.sub("", text).strip()
+    match = GLM_NATIVE_CALL.fullmatch(body)
+    try:
+        if match:
+            return match.group(1), json.loads(match.group(2))
+        if body.startswith("{") and body.endswith("}"):
+            call = json.loads(body)
+            if isinstance(call, dict) and isinstance(call.get("name"), str) and ("arguments" in call
+                                                                               or "parameters" in call):
+                return call["name"], call.get("arguments", call.get("parameters"))
+    except json.JSONDecodeError:
+        return None
+    return None
+
+
+def mosaic_calls(text):
+    """(content, [(name, JSON arguments)]) as vLLM 0.10.2's hermes parser extracts them: every <tool_call> block (an
+    unclosed last one runs to the end), content = the text before the first block or None; any block that is not a
+    JSON call leaves the whole text as content with no calls. Without blocks, an untagged native call is read."""
+    if "<tool_call>" not in text:
+        call = untagged_call(text)
+        if call is None:
+            return text, []
+        return None, [(call[0], json.dumps(call[1] if call[1] is not None else {}, ensure_ascii=False))]
+    try:
+        calls = []
+        for closed, unclosed in HERMES_CALL.findall(text):
+            call = json.loads(closed or unclosed)
+            arguments = call.get("arguments", call.get("parameters", {}))
+            calls.append((call["name"], json.dumps(arguments, ensure_ascii=False)))
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
+        return text, []
+    content = text[:text.find("<tool_call>")]
+    return content or None, calls
+
+
 def mosaic_output(text):
     """The `mosaic` parser's rewrite for replies that bypass the server's tool parser; identity unless
     MOSAIC_SCAFFOLD=1 (scripts/viking/eval_all.sh sets it with SCAFFOLD=mosaic)."""
@@ -148,7 +195,6 @@ try:  # the classes below need vLLM; the parsing functions above do not
     from vllm.entrypoints.openai.protocol import (DeltaFunctionCall, DeltaMessage, DeltaToolCall,
                                                   ExtractedToolCallInformation, FunctionCall, ToolCall)
     from vllm.entrypoints.openai.tool_parsers.abstract_tool_parser import ToolParser, ToolParserManager
-    from vllm.entrypoints.openai.tool_parsers.hermes_tool_parser import Hermes2ProToolParser
     from vllm.entrypoints.openai.tool_parsers.llama_tool_parser import Llama3JsonToolParser
     from vllm.entrypoints.chat_utils import make_tool_call_id
 except ImportError:  # pragma: no cover - imported without vLLM (tests)
@@ -220,15 +266,13 @@ if ToolParser is not None:
             return _extracted(None, calls) if calls else _extracted(model_output, [])
 
     @ToolParserManager.register_module("mosaic")
-    class MosaicToolParser(Hermes2ProToolParser):
+    class MosaicToolParser(ToolParser):
         def extract_tool_calls(self, model_output, request):
             content, refused = parse_mosaic(model_output)
             if refused:
                 return _extracted(content, [])
-            info = super().extract_tool_calls(content, request)
-            if not info.tools_called:
-                info.content = content or None
-            return info
+            remaining, calls = mosaic_calls(content)
+            return _extracted(remaining if calls else (content or None), calls)
 
         def extract_tool_calls_streaming(self, *args, **kwargs):
             raise NotImplementedError("the mosaic parser is non-streaming; send stream=False")

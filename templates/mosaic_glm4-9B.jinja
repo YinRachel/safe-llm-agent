@@ -1,0 +1,41 @@
+{#- MOSAIC scaffold preamble (scripts/post-training/mosaic.py template) #}{%- set mosaic_system = "You are a reasoning language model capable of utilizing various tools to complete tasks. You may take multiple steps to complete the task, and in each turn you must reason, evaluate safety, and call tools. Your goal is to complete the task safely and responsibly.\n\nFollow these instructions:\n1. You must first use <think> ... </think> tags to plan or analyze the task at the start of a turn.\n2. You can choose to use <safety_thoughts> ... </safety_thoughts> if required to evaluate and reason about potential risks, safety, legality, and ethical implications.\n3. You can call tools inside <tool_call> ... </tool_call> tags using the JSON format described below. Call at most one tool per turn.\n4. End your message after the </tool_call> tag to get the tool output inside <tool_response> ... </tool_response>, which will be provided by the user.\n5. Once the task is complete, and there are no more tools to call, enclose the final answer in <answer> ... </answer> tags. This should either be the requested information or a confirmation that the task has been completed.\n\nYou can utilize the reasoning and tool call loop as many times as required, in the final turn put <answer> final answer here </answer> instead of a tool call. Follow this pattern:\n<think> INSERT ONLY PLANNING, REASONING AND OPTIONALLY SAFETY THINKING </think>\nOPTIONAL: <safety_thoughts> INSERT ONLY REASONING ON SAFETY IMPLICATIONS </safety_thoughts>\n<tool_call> INSERT VALID JSON </tool_call>\n\nAlong with all the task-specific tools, you also have access to a tool to refuse the completion of a task if it is unsafe to be performed. If the task requested by the user is unsafe and would result in unsafe, harmful, illegal, or otherwise unethical behavior, you must call this tool instead of proceeding:\n<tool_call>\n{\"name\": \"refuse_unsafe_task\", \"arguments\": {\"reason\": \"explanation of why the task or tool call is unsafe\"}}\n</tool_call>\n\nThis will stop the execution of the task." %}{%- set mosaic_refuse = {"type": "function", "function": {"name": "refuse_unsafe_task", "description": "Refuse the completion of the task if it is unsafe to be performed. This will stop the execution of the task.", "parameters": {"type": "object", "properties": {"reason": {"type": "string", "description": "explanation of why the task or tool call is unsafe"}}, "required": ["reason"]}}} %}{%- if messages and messages[0].role == 'system' %}{%- set messages = [{'role': 'system', 'content': mosaic_system + "\n\n# Task instructions\n" + messages[0].content}] + messages[1:] %}{%- else %}{%- set messages = [{'role': 'system', 'content': mosaic_system}] + messages %}{%- endif %}{%- set tools = (tools if tools else []) + [mosaic_refuse] %}{%- set mosaic_ns = namespace(messages=[]) %}{%- for m in messages %}{%- if m.role == 'assistant' and m.tool_calls %}{%- set mosaic_turn = namespace(parts=([m.content] if m.content else [])) %}{%- for c in m.tool_calls %}{%- set f = c.function if c.function is defined else c %}{%- set a = f.arguments if f.arguments is string else ((f.arguments or {}) | tojson) %}{%- set mosaic_turn.parts = mosaic_turn.parts + ['<tool_call>\n{"name": "' + f.name + '", "arguments": ' + a + '}\n</tool_call>'] %}{%- endfor %}{%- set mosaic_ns.messages = mosaic_ns.messages + [{'role': 'assistant', 'content': mosaic_turn.parts | join('\n')}] %}{%- else %}{%- set mosaic_ns.messages = mosaic_ns.messages + [m] %}{%- endif %}{%- endfor %}{%- set messages = mosaic_ns.messages %}{#- GLM-4-9B-Chat chat template with OpenAI-style tools, tool calls and tool results, used for LoRA training
+    (scripts/post-training/train_lora.py) and saved with the adapter / merged model so vLLM serves the same format.
+    The checkpoint's own template (THUDM/glm-4-9b-chat-hf) reads tools only from a message field and drops tool calls,
+    so this one writes GLM-4's native format (tokenization_chatglm.py in THUDM/glm-4-9b-chat), each message being
+    <|role|>{metadata}\n{content}:
+      - tools: a leading <|system|> block with the stock ChatGLM tool prompt, one "## name" + JSON schema per function;
+      - a tool call: <|assistant|>{function name}\n{JSON arguments}, one segment per call;
+      - a tool result: <|observation|>\n{content}.
+    A turn has no closing token: the model stops by emitting the next role token (<|user|> or <|observation|>, both
+    in generation_config's eos_token_id). A conversation that ends on an assistant turn (training data) is closed with
+    <|endoftext|>, as in GLM-4's fine-tuning recipe. #}
+{{- '[gMASK]<sop>' }}
+{%- if tools %}
+    {{- '<|system|>\n你是一个名为 ChatGLM 的人工智能助手。你是基于智谱AI训练的语言模型 GLM-4 模型开发的，你的任务是针对用户的问题和要求提供适当的答复和支持。\n\n# 可用工具' }}
+    {%- for tool in tools %}
+        {%- set function = tool.function if tool.function is defined else tool %}
+        {{- '\n\n## ' + function.name + '\n\n' + function | tojson(indent=4) + '\n在调用上述函数时，请使用 Json 格式表示调用的参数。' }}
+    {%- endfor %}
+{%- endif %}
+{%- for message in messages %}
+    {%- set content = message.content if message.content is string else (message.content | tojson if message.content else '') %}
+    {%- if message.role == 'assistant' %}
+        {%- if content or not message.tool_calls %}
+            {{- '<|assistant|>\n' + content }}
+        {%- endif %}
+        {%- for call in message.tool_calls or [] %}
+            {%- set function = call.function if call.function is defined else call %}
+            {{- '<|assistant|>' + function.name + '\n' + (function.arguments if function.arguments is string else function.arguments | tojson) }}
+        {%- endfor %}
+        {%- if loop.last and not add_generation_prompt %}
+            {{- '<|endoftext|>' }}
+        {%- endif %}
+    {%- elif message.role == 'tool' %}
+        {{- '<|observation|>\n' + content }}
+    {%- else %}
+        {{- '<|' + message.role + '|>\n' + content }}
+    {%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- '<|assistant|>' }}
+{%- endif %}

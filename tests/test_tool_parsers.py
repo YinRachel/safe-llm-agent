@@ -171,6 +171,24 @@ class MosaicParseTests(unittest.TestCase):
         self.assertEqual(tp.parse_mosaic("<think>Cut off mid-thought"), ("", False))
         self.assertEqual(tp.parse_mosaic("Plain reply."), ("Plain reply.", False))
 
+    def test_mosaic_calls_reads_like_hermes(self):
+        text = "Checking. " + mosaic_call("lookup", {"q": "é"}) + mosaic_call("other", {})
+        self.assertEqual(tp.mosaic_calls(text), ("Checking. ", [("lookup", '{"q": "é"}'), ("other", "{}")]))
+        self.assertEqual(tp.mosaic_calls(mosaic_call("lookup", {"q": 1})), (None, [("lookup", '{"q": 1}')]))
+        unclosed = '<tool_call>\n{"name": "lookup", "arguments": {"q": 1}}'
+        self.assertEqual(tp.mosaic_calls(unclosed), (None, [("lookup", '{"q": 1}')]))
+        broken = "<tool_call>not json</tool_call>"
+        self.assertEqual(tp.mosaic_calls(broken), (broken, []))
+        self.assertEqual(tp.mosaic_calls('<tool_call>{"name": "f", "parameters": {"a": 1}}</tool_call>'),
+                         (None, [("f", '{"a": 1}')]))
+        self.assertEqual(tp.mosaic_calls("Plain."), ("Plain.", []))
+
+    def test_mosaic_calls_reads_native_untagged_calls(self):
+        self.assertEqual(tp.mosaic_calls('{"name": "lookup", "parameters": {"q": "x"}}'),
+                         (None, [("lookup", '{"q": "x"}')]))
+        self.assertEqual(tp.mosaic_calls('\nlookup\n{"q": "x"}'), (None, [("lookup", '{"q": "x"}')]))
+        self.assertEqual(tp.mosaic_calls('{"answer": 1}'), ('{"answer": 1}', []))
+
     def test_mosaic_output_only_with_the_scaffold(self):
         text = "<think>x</think><answer>Hi</answer>"
         saved = os.environ.pop("MOSAIC_SCAFFOLD", None)
@@ -213,6 +231,8 @@ class VllmClassTests(unittest.TestCase):
                          (False, [], self.tp.mosaic_refusal("r")))
         answer = parser.extract_tool_calls("<think>done</think><answer>Booked.</answer>", self.request)
         self.assertEqual((answer.tools_called, answer.content), (False, "Booked."))
+        native = parser.extract_tool_calls('<think>ok</think>\nlookup\n{"q": "X"}', self.request)
+        self.assertEqual([(c.function.name, c.function.arguments) for c in native.tool_calls], [("lookup", '{"q": "X"}')])
 
     def test_glm_keeps_special_tokens_and_extracts(self):
         parser = self.tp.Glm4NativeToolParser(None)

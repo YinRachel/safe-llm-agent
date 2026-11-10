@@ -298,7 +298,7 @@ class SingleTurnLoop(unittest.TestCase):
         loop.tokenizer = tokenizer
 
         async def generate(request_id, prompt_ids, sampling_params):
-            ids = tokenizer.encode(reply, add_special_tokens=False) + ([loop.im_end] if end else [])
+            ids = tokenizer.encode(reply, add_special_tokens=False) + ([loop.fmt.stop_ids[0]] if end else [])
             return SimpleNamespace(token_ids=ids, log_probs=None)
         loop.server_manager = SimpleNamespace(generate=generate)
         sample = safeutil.next_action_sample(record(), SYSTEM, random.Random(0), lambda m, t: True)

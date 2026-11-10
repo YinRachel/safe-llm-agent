@@ -2,6 +2,9 @@
 the tool call in the benchmark's simulated environment, append the tool response, until refusal, an answer, the turn
 limit or the response-length budget.
 
+Chat-format details (stop tokens, how a tool turn is rendered, MOSAIC-format tool calls in the history) come from
+mosaic.ChatFormat, so Qwen, Llama-3.1 and GLM-4 checkpoints share this loop.
+
 Token bookkeeping follows verl's ToolAgentLoop: prompt + generated tokens stay as produced (no re-tokenisation), tool
 turns are appended as the chat template renders them, and response_mask is 1 only on generated tokens, so tool
 responses carry no gradient (Sec. 2.2). The episode summary goes to the reward through extra_fields.
@@ -36,12 +39,13 @@ class MosaicAgentLoop(AgentLoopBase):
         cls.response_length = rollout.response_length
         cls.max_turns = rollout.multi_turn.max_assistant_turns or mosaic.MAX_TURNS
         cls.group_size = rollout.n
-        cls.im_end = tokenizer.convert_tokens_to_ids("<|im_end|>")
+        model = getattr(getattr(config.actor_rollout_ref, "model", None), "path", None)
+        cls.fmt = mosaic.ChatFormat(tokenizer, model)
 
     async def run(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
         task = json.loads(kwargs["extra_info"]["task_json"])
         episode = mosaic.Episode.start(self.env_manager, task)
-        messages = mosaic.task_messages(task, self.system_text)
+        messages = self.fmt.history(mosaic.task_messages(task, self.system_text))
         prompt_ids = await self.loop.run_in_executor(None, lambda: self.tokenizer.apply_chat_template(
             messages, tools=episode.tools, add_generation_prompt=True, tokenize=True))
         request_id = uuid4().hex
@@ -59,7 +63,7 @@ class MosaicAgentLoop(AgentLoopBase):
             elif logprobs is not None:
                 logprobs += output.log_probs
             text = self.tokenizer.decode(generated, skip_special_tokens=True)
-            if len(mask) >= self.response_length or not generated or generated[-1] != self.im_end:
+            if len(mask) >= self.response_length or not self.fmt.ended(generated):
                 # Cut off by the budget (or vLLM's own length limit): act on nothing, the judge sees the partial turn.
                 episode.turns.append(mosaic.parse_turn(text))
                 episode.observations.append(None)
@@ -68,7 +72,7 @@ class MosaicAgentLoop(AgentLoopBase):
             observation = episode.step(mosaic.parse_turn(text), self.max_turns)
             if observation is None:
                 break
-            tool_ids = mosaic.tool_turn_ids(self.tokenizer, observation)
+            tool_ids = self.fmt.tool_turn_ids(observation, generated)
             if len(mask) + len(tool_ids) >= self.response_length:
                 episode.status = "truncated"
                 break

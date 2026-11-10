@@ -129,7 +129,36 @@ def _parse_call(raw):
         return None, None, f"tool call is not JSON: {error.msg}"
     if not isinstance(call, dict) or not isinstance(call.get("name"), str):
         return None, None, "tool call has no name"
-    return call["name"], _arguments(call.get("arguments", {})), None
+    # Llama-3.1's own tool prompt asks for "parameters"; the MOSAIC text asks for "arguments".
+    return call["name"], _arguments(call.get("arguments", call.get("parameters", {}))), None
+
+
+# A model's native call format without MOSAIC tags: Llama-3.1's bare {"name": ..., "parameters": ...} object, or
+# GLM-4's `name\n{JSON arguments}`. Executed so a rollout can go on, but never well-formed (no format reward).
+# scripts/eval/tool_parsers.py untagged_call reads the same two forms at evaluation time.
+REASONING_BLOCKS = re.compile(r"<(think|safety_thoughts)>.*?</\1>", re.S)
+GLM_NATIVE_CALL = re.compile(r"\s*([A-Za-z_][\w.\-]*)\n(\{.*\})\s*", re.S)
+
+
+def untagged_call(text):
+    """The raw JSON of a native untagged call, normalised to {"name", "arguments"}, or None."""
+    body = REASONING_BLOCKS.sub("", text).strip()
+    match = GLM_NATIVE_CALL.fullmatch(body)
+    if match:
+        try:
+            arguments = json.loads(match.group(2))
+        except json.JSONDecodeError:
+            return None
+        return json.dumps({"name": match.group(1), "arguments": arguments}, ensure_ascii=False)
+    if body.startswith("{") and body.endswith("}"):
+        try:
+            call = json.loads(body)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(call, dict) and isinstance(call.get("name"), str) and ("arguments" in call
+                                                                           or "parameters" in call):
+            return body
+    return None
 
 
 def parse_turn(text):
@@ -148,6 +177,8 @@ def parse_turn(text):
         if call is None:
             found = re.search(r"<answer>(.*?)</answer>", text, re.S)
             answer = found.group(1) if found else None
+        if call is None and answer is None:
+            call = untagged_call(text)
     if call is not None:
         name, arguments, error = _parse_call(call)
         if error:
@@ -159,19 +190,81 @@ def parse_turn(text):
     return Turn(text, "text", answer=text.strip(), safety=safety, error="no <tool_call> or <answer>")
 
 
-ANCHOR = [{"role": "system", "content": "S"}]
+class ChatFormat:
+    """What the agent loops need from a model's chat template, for Qwen (ChatML), Llama-3.1 and GLM-4 alike.
+
+    - stop_ids: the tokens vLLM ends a turn on (the tokenizer's EOS plus generation_config.json's eos_token_id list:
+      Qwen <|im_end|>, Llama <|eot_id|> / <|eom_id|>, GLM-4 <|user|> / <|observation|>, which close a turn by opening
+      the next one).
+    - tool_turn_ids: the tokens that follow a generated turn, rendered by the template: whatever closes the assistant
+      turn, the tool turn, and the next assistant header. When the generated turn already ended with that closing
+      token, it is not repeated.
+    - history: the MOSAIC text format for earlier tool calls. The policy writes its calls as <tool_call> JSON text;
+      Qwen's templates render a structured tool call the same way, but Llama-3.1's renders bare JSON (dropping any
+      text next to it) and GLM-4's its native `name\n{...}`. For those, earlier assistant tool calls (Agent-SafetyBench
+      dialogs, APIGen-MT histories) are rewritten into content text as make_template's preamble does at evaluation.
+    """
+    MARK = "\ue000MOSAIC-TURN\ue000"
+
+    def __init__(self, tokenizer, model_path=None):
+        self.tokenizer = tokenizer
+        ids = [tokenizer.eos_token_id]
+        if model_path:
+            config = Path(model_path) / "generation_config.json"
+            if config.exists():
+                eos = json.loads(config.read_text()).get("eos_token_id")
+                ids += eos if isinstance(eos, list) else [eos]
+        self.stop_ids = list(dict.fromkeys(i for i in ids if i is not None))
+        self.stop_texts = {i: tokenizer.convert_ids_to_tokens(i) for i in self.stop_ids}
+        probe = [{"role": "user", "content": "U"},
+                 {"role": "assistant", "content": "", "tool_calls": [
+                     {"type": "function", "function": {"name": "probe_tool", "arguments": {"a": 1}}}]}]
+        self.text_calls = "<tool_call>" not in tokenizer.apply_chat_template(probe, tokenize=False)
+
+    def ended(self, generated):
+        return bool(generated) and generated[-1] in self.stop_ids
+
+    def history(self, messages):
+        return text_tool_calls(messages) if self.text_calls else messages
+
+    def tool_turn_ids(self, content, generated=None):
+        base = [{"role": "system", "content": "S"}, {"role": "user", "content": "U"},
+                {"role": "assistant", "content": self.MARK}]
+        text = self.tokenizer.apply_chat_template(base + [{"role": "tool", "content": content}],
+                                                  add_generation_prompt=True, tokenize=False)
+        tail = text[text.index(self.MARK) + len(self.MARK):]
+        if generated and self.ended(generated):
+            closing = self.stop_texts[generated[-1]]
+            if tail.startswith(closing):
+                tail = tail[len(closing):]
+        return self.tokenizer.encode(tail, add_special_tokens=False)
+
+
+def text_call(name, arguments):
+    """One tool call in the MOSAIC text format; make_template's preamble writes the same string in Jinja."""
+    arguments = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
+    return '<tool_call>\n{"name": "' + name + '", "arguments": ' + arguments + '}\n</tool_call>'
+
+
+def text_tool_calls(messages):
+    """Assistant tool calls rewritten into content text (text_call each, after any content, newline-joined)."""
+    out = []
+    for message in messages:
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            parts = [message["content"]] if message.get("content") else []
+            for call in message["tool_calls"]:
+                function = call.get("function", call)
+                parts.append(text_call(function["name"], function.get("arguments") or {}))
+            out.append({"role": "assistant", "content": "\n".join(parts)})
+        else:
+            out.append(message)
+    return out
 
 
 def tool_turn_ids(tokenizer, content):
-    """Tokens that follow a generated turn ending in <|im_end|>: the newline the template puts between turns, the tool
-    turn as the chat template renders it, and the next assistant header (the text the template adds after a bare
-    system turn)."""
-    anchor = tokenizer.apply_chat_template(ANCHOR, tokenize=False)
-    text = tokenizer.apply_chat_template(ANCHOR + [{"role": "tool", "content": content}], add_generation_prompt=True,
-                                         tokenize=False)
-    if not text.startswith(anchor) or not anchor.endswith("\n"):
-        raise ValueError("chat template does not render a system turn as a newline-terminated prefix")
-    return tokenizer.encode("\n" + text[len(anchor):], add_special_tokens=False)
+    """Qwen (ChatML) shorthand kept for callers that have no ChatFormat: tokens after a turn ending in <|im_end|>."""
+    fmt = ChatFormat(tokenizer)
+    return fmt.tool_turn_ids(content, [tokenizer.convert_tokens_to_ids("<|im_end|>")])
 
 
 # ----------------------------------------------------------------------------- episodes
@@ -323,10 +416,12 @@ def stable_seed(*parts):
 
 
 # ----------------------------------------------------------------------------- training data
-def prompt_length(tokenizer, task, system_text, env_manager):
+def prompt_length(tokenizer, task, system_text, env_manager, fmt=None):
     _, tools = task_tools(env_manager, task)
-    return len(tokenizer.apply_chat_template(task_messages(task, system_text), tools=tools,
-                                             add_generation_prompt=True, tokenize=True))
+    messages = task_messages(task, system_text)
+    if fmt is not None:
+        messages = fmt.history(messages)
+    return len(tokenizer.apply_chat_template(messages, tools=tools, add_generation_prompt=True, tokenize=True))
 
 
 def dataset_row(index, task):
@@ -354,11 +449,15 @@ def build_data(argv=None):
     astb.check_repo(args.astb_repo)
     tasks = astb.load_data(args.astb_repo)[:args.limit]
     env_manager = astb.load_env_manager(args.astb_repo)
+    if Path(args.tokenizer).is_dir():
+        args.revision = None  # a local model directory (another base model's p00 merged/) has no hub revision
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, revision=args.revision)
+    fmt = ChatFormat(tokenizer, args.tokenizer if Path(args.tokenizer).is_dir() else None)
     system_text = load_system_text()
-    rows, dropped = [], []
+    rows, dropped, longest = [], [], 0
     for task in tasks:
-        length = prompt_length(tokenizer, task, system_text, env_manager)
+        length = prompt_length(tokenizer, task, system_text, env_manager, fmt)
+        longest = max(longest, length)
         if length > args.max_prompt_length:
             dropped.append(dict(id=task["id"], prompt_tokens=length))
         else:
@@ -369,7 +468,8 @@ def build_data(argv=None):
     manifest = dict(source="thu-coai/Agent-SafetyBench", upstream_commit=astb.ASTB_COMMIT,
                     dataset_sha256=hashlib.sha256(data_file.read_bytes()).hexdigest(),
                     system_text_sha256=hashlib.sha256(load_system_text().encode()).hexdigest(),
-                    tokenizer=args.tokenizer, revision=args.revision, max_prompt_length=args.max_prompt_length,
+                    tokenizer=str(args.tokenizer), revision=args.revision, max_prompt_length=args.max_prompt_length,
+                    longest_prompt=longest, text_calls=fmt.text_calls,
                     rows=len(rows), fulfillable=sum(json.loads(r["extra_info"]["task_json"])["fulfillable"]
                                                     for r in rows), dropped=dropped)
     args.output.with_suffix(".manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -410,11 +510,33 @@ def export(argv=None):
 TEMPLATE_MARK = "{#- MOSAIC scaffold preamble (scripts/post-training/mosaic.py template) #}"
 
 
-def make_template(original, system_text=None):
+# Jinja twin of text_tool_calls, for templates whose own tool-call rendering is not the MOSAIC text format.
+TEXT_CALLS_PREAMBLE = (
+    "{%- set mosaic_ns = namespace(messages=[]) %}"
+    "{%- for m in messages %}"
+    "{%- if m.role == 'assistant' and m.tool_calls %}"
+    "{%- set mosaic_turn = namespace(parts=([m.content] if m.content else [])) %}"
+    "{%- for c in m.tool_calls %}"
+    "{%- set f = c.function if c.function is defined else c %}"
+    "{%- set a = f.arguments if f.arguments is string else ((f.arguments or {}) | tojson) %}"
+    "{%- set mosaic_turn.parts = mosaic_turn.parts + ['<tool_call>\\n{\"name\": \"' + f.name + '\", \"arguments\": ' + a + '}\\n</tool_call>'] %}"
+    "{%- endfor %}"
+    "{%- set mosaic_ns.messages = mosaic_ns.messages + [{'role': 'assistant', 'content': mosaic_turn.parts | join('\\n')}] %}"
+    "{%- else %}"
+    "{%- set mosaic_ns.messages = mosaic_ns.messages + [m] %}"
+    "{%- endif %}"
+    "{%- endfor %}"
+    "{%- set messages = mosaic_ns.messages %}"
+)
+
+
+def make_template(original, system_text=None, text_calls=False):
     """The checkpoint's chat template behind a Jinja preamble that rewrites the request the way training built it
     (task_messages, task_tools): the MOSAIC text leads the system prompt, any system prompt of the benchmark follows
     under "# Task instructions", and refuse_unsafe_task is appended to the tools (added when there are none). The
-    rendering is then byte-identical to training's; scripts/eval/tool_parsers.py `mosaic` reads the replies."""
+    rendering is then byte-identical to training's; scripts/eval/tool_parsers.py `mosaic` reads the replies.
+    text_calls (Llama-3.1, GLM-4: ChatFormat.text_calls) also rewrites earlier assistant tool calls into MOSAIC text, as
+    ChatFormat.history does in training."""
     system_text = load_system_text() if system_text is None else system_text
     preamble = (
         TEMPLATE_MARK
@@ -427,28 +549,43 @@ def make_template(original, system_text=None):
         + "{%- set messages = [{'role': 'system', 'content': mosaic_system}] + messages %}"
         + "{%- endif %}"
         + "{%- set tools = (tools if tools else []) + [mosaic_refuse] %}"
+        + (TEXT_CALLS_PREAMBLE if text_calls else "")
     )
     return preamble + original
 
 
 def template(argv=None):
-    """Write templates/mosaic.jinja (+ .json provenance) from the pinned Qwen2.5-3B-Instruct template in the HF cache."""
+    """Write a MOSAIC evaluation chat template (+ .json provenance): by default templates/mosaic.jinja from the pinned
+    Qwen2.5-3B-Instruct template in the HF cache; with --source, from a local model directory's chat template (a
+    merged run, for Qwen3, Llama-3.1 and GLM-4 checkpoints), adding the tool-call rewrite when that template does not
+    render tool calls in the MOSAIC text format (ChatFormat.text_calls)."""
     parser = argparse.ArgumentParser(description="Write the MOSAIC evaluation chat template.")
     parser.add_argument("--out", type=Path, default=PROJECT / "templates/mosaic.jinja")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--revision", default=DEFAULT_REVISION)
+    parser.add_argument("--source", type=Path, help="local model directory whose chat template to wrap")
     args = parser.parse_args(argv)
     from safety_template import load_chat_template, sha256_text
-    original, system_text = load_chat_template(args.model, args.revision), load_system_text()
-    text = make_template(original, system_text)
+    system_text = load_system_text()
+    if args.source:
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(args.source)
+        original, text_calls = tokenizer.chat_template, ChatFormat(tokenizer).text_calls
+        origin = dict(source=str(args.source))
+    else:
+        original, text_calls = load_chat_template(args.model, args.revision), False
+        origin = dict(model=args.model, revision=args.revision)
+    text = make_template(original, system_text, text_calls=text_calls)
     args.out.write_text(text)
-    meta = dict(model=args.model, revision=args.revision, original_template_sha256=sha256_text(original),
+    meta = dict(**origin, original_template_sha256=sha256_text(original), text_calls=text_calls,
                 template_sha256=sha256_text(text), system_text_sha256=sha256_text(system_text),
                 system_text_source=str(SYSTEM_TEXT.relative_to(PROJECT)), refuse_tool=REFUSE_TOOL,
                 method="MOSAIC inference scaffold: system prompt first, benchmark system prompt under "
-                       "'# Task instructions', refuse_unsafe_task appended to the tools")
+                       "'# Task instructions', refuse_unsafe_task appended to the tools"
+                       + ("; earlier tool calls rewritten as MOSAIC <tool_call> text" if text_calls else ""))
     args.out.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
-    print(f"wrote {args.out} (sha256 {meta['template_sha256'][:16]}) and {args.out.with_suffix('.json')}")
+    print(f"wrote {args.out} (sha256 {meta['template_sha256'][:16]}, text_calls={text_calls}) and "
+          f"{args.out.with_suffix('.json')}")
 
 
 COMMANDS = {"build-data": build_data, "export": export, "template": template}

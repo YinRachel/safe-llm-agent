@@ -8,8 +8,9 @@
 # CHAT_TEMPLATE: optional serving template, e.g. templates/ptst.jinja (F4 PTST). The GLM-4 and Llama-3.1 hub models
 # default to their training templates (templates/glm4_tools.jinja, templates/llama31_tools.jinja); merged runs carry theirs.
 # Extra sbatch options for every job: SBATCH_EXTRA="--mail-type=END --mail-user=..." (CUDA_MODULE etc. are exported).
-# SCAFFOLD=mosaic: evaluate under the MOSAIC inference scaffold, as the paper deploys MOSAIC models (Qwen2.5 only):
-#   templates/mosaic.jinja adds its system prompt and the refuse_unsafe_task tool, the `mosaic` tool parser
+# SCAFFOLD=mosaic: evaluate under the MOSAIC inference scaffold, as the paper deploys MOSAIC models:
+#   templates/mosaic.jinja (Qwen2.5-3B) or templates/mosaic_<model tag>.jinja (qwen4B, llama3.1-8B, glm4-9B; built by
+#   mosaic.py template --source <p00 merged>) adds its system prompt and the refuse_unsafe_task tool, the `mosaic` tool parser
 #   (scripts/eval/tool_parsers.py) turns a refusal call into a plain-text refusal and drops <think>, and
 #   MOSAIC_SCAFFOLD=1 applies the same rewrite where no tool parser runs. Outputs go to <eval root>/mosaic/ and the
 #   tag gets a -mosaic suffix.
@@ -19,16 +20,19 @@ set -euo pipefail
 MODEL_PATH="${1:?usage: eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
 TAG="${2:?usage: eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
 CHAT_TEMPLATE="${3:-}"
+source scripts/viking/results_dir.sh
 if [[ "${SCAFFOLD:-}" == mosaic ]]; then
     [[ -z "$CHAT_TEMPLATE" ]] || { echo "SCAFFOLD=mosaic brings its own template; drop CHAT_TEMPLATE" >&2; exit 1; }
-    CHAT_TEMPLATE=templates/mosaic.jinja
+    scaffold_tag="$(model_tag "$MODEL_PATH")"
+    if [[ "$scaffold_tag" == qwen2.5-3B ]]; then CHAT_TEMPLATE=templates/mosaic.jinja
+    else CHAT_TEMPLATE="templates/mosaic_$scaffold_tag.jinja"; fi
+    [[ -f "$CHAT_TEMPLATE" ]] || { echo "No MOSAIC scaffold template for $scaffold_tag: $CHAT_TEMPLATE" >&2; exit 1; }
     TAG="$TAG-mosaic"
     export TOOL_CALL_PARSER=mosaic MOSAIC_SCAFFOLD=1
 elif [[ -n "${SCAFFOLD:-}" ]]; then
     echo "Unknown SCAFFOLD: $SCAFFOLD (mosaic)" >&2; exit 2
 fi
 [[ -f scripts/viking/agentharm.sbatch ]] || { echo "Run from the project root" >&2; exit 1; }
-source scripts/viking/results_dir.sh
 check_scratch_link "$MODEL_PATH" || exit 1  # merged/ is a symlink into scratch for Viking training runs
 if [[ -d "$MODEL_PATH" ]]; then
     [[ -f "$MODEL_PATH/config.json" ]] || { echo "No config.json in $MODEL_PATH (use the merged/ directory)" >&2; exit 1; }

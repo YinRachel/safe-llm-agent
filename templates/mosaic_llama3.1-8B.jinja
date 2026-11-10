@@ -1,0 +1,116 @@
+{#- MOSAIC scaffold preamble (scripts/post-training/mosaic.py template) #}{%- set mosaic_system = "You are a reasoning language model capable of utilizing various tools to complete tasks. You may take multiple steps to complete the task, and in each turn you must reason, evaluate safety, and call tools. Your goal is to complete the task safely and responsibly.\n\nFollow these instructions:\n1. You must first use <think> ... </think> tags to plan or analyze the task at the start of a turn.\n2. You can choose to use <safety_thoughts> ... </safety_thoughts> if required to evaluate and reason about potential risks, safety, legality, and ethical implications.\n3. You can call tools inside <tool_call> ... </tool_call> tags using the JSON format described below. Call at most one tool per turn.\n4. End your message after the </tool_call> tag to get the tool output inside <tool_response> ... </tool_response>, which will be provided by the user.\n5. Once the task is complete, and there are no more tools to call, enclose the final answer in <answer> ... </answer> tags. This should either be the requested information or a confirmation that the task has been completed.\n\nYou can utilize the reasoning and tool call loop as many times as required, in the final turn put <answer> final answer here </answer> instead of a tool call. Follow this pattern:\n<think> INSERT ONLY PLANNING, REASONING AND OPTIONALLY SAFETY THINKING </think>\nOPTIONAL: <safety_thoughts> INSERT ONLY REASONING ON SAFETY IMPLICATIONS </safety_thoughts>\n<tool_call> INSERT VALID JSON </tool_call>\n\nAlong with all the task-specific tools, you also have access to a tool to refuse the completion of a task if it is unsafe to be performed. If the task requested by the user is unsafe and would result in unsafe, harmful, illegal, or otherwise unethical behavior, you must call this tool instead of proceeding:\n<tool_call>\n{\"name\": \"refuse_unsafe_task\", \"arguments\": {\"reason\": \"explanation of why the task or tool call is unsafe\"}}\n</tool_call>\n\nThis will stop the execution of the task." %}{%- set mosaic_refuse = {"type": "function", "function": {"name": "refuse_unsafe_task", "description": "Refuse the completion of the task if it is unsafe to be performed. This will stop the execution of the task.", "parameters": {"type": "object", "properties": {"reason": {"type": "string", "description": "explanation of why the task or tool call is unsafe"}}, "required": ["reason"]}}} %}{%- if messages and messages[0].role == 'system' %}{%- set messages = [{'role': 'system', 'content': mosaic_system + "\n\n# Task instructions\n" + messages[0].content}] + messages[1:] %}{%- else %}{%- set messages = [{'role': 'system', 'content': mosaic_system}] + messages %}{%- endif %}{%- set tools = (tools if tools else []) + [mosaic_refuse] %}{%- set mosaic_ns = namespace(messages=[]) %}{%- for m in messages %}{%- if m.role == 'assistant' and m.tool_calls %}{%- set mosaic_turn = namespace(parts=([m.content] if m.content else [])) %}{%- for c in m.tool_calls %}{%- set f = c.function if c.function is defined else c %}{%- set a = f.arguments if f.arguments is string else ((f.arguments or {}) | tojson) %}{%- set mosaic_turn.parts = mosaic_turn.parts + ['<tool_call>\n{"name": "' + f.name + '", "arguments": ' + a + '}\n</tool_call>'] %}{%- endfor %}{%- set mosaic_ns.messages = mosaic_ns.messages + [{'role': 'assistant', 'content': mosaic_turn.parts | join('\n')}] %}{%- else %}{%- set mosaic_ns.messages = mosaic_ns.messages + [m] %}{%- endif %}{%- endfor %}{%- set messages = mosaic_ns.messages %}{#- Llama-3.1-8B-Instruct chat template (meta-llama/Llama-3.1-8B-Instruct @ 0e9e39f2) with two changes, used for LoRA
+    training (scripts/post-training/train_lora.py) and saved with the adapter / merged model so vLLM serves the same format:
+    1. Several tool calls in one assistant turn are joined with "; " (the stock template raises an exception; vLLM's
+       llama3_json tool parser reads this form). As in the stock template, assistant text next to tool calls is dropped.
+    2. String tool results are inserted as-is instead of being JSON-quoted (the stock `is iterable` test matches strings). #}
+{{- bos_token }}
+{%- if custom_tools is defined %}
+    {%- set tools = custom_tools %}
+{%- endif %}
+{%- if not tools_in_user_message is defined %}
+    {%- set tools_in_user_message = true %}
+{%- endif %}
+{%- if not date_string is defined %}
+    {%- set date_string = "26 Jul 2024" %}
+{%- endif %}
+{%- if not tools is defined %}
+    {%- set tools = none %}
+{%- endif %}
+
+{#- This block extracts the system message, so we can slot it into the right place. #}
+{%- if messages[0]['role'] == 'system' %}
+    {%- set system_message = messages[0]['content']|trim %}
+    {%- set messages = messages[1:] %}
+{%- else %}
+    {%- set system_message = "" %}
+{%- endif %}
+
+{#- System message + builtin tools #}
+{{- "<|start_header_id|>system<|end_header_id|>\n\n" }}
+{%- if builtin_tools is defined or tools is not none %}
+    {{- "Environment: ipython\n" }}
+{%- endif %}
+{%- if builtin_tools is defined %}
+    {{- "Tools: " + builtin_tools | reject('equalto', 'code_interpreter') | join(", ") + "\n\n"}}
+{%- endif %}
+{{- "Cutting Knowledge Date: December 2023\n" }}
+{{- "Today Date: " + date_string + "\n\n" }}
+{%- if tools is not none and not tools_in_user_message %}
+    {{- "You have access to the following functions. To call a function, please respond with JSON for a function call." }}
+    {{- 'Respond in the format {"name": function name, "parameters": dictionary of argument name and its value}.' }}
+    {{- "Do not use variables.\n\n" }}
+    {%- for t in tools %}
+        {{- t | tojson(indent=4) }}
+        {{- "\n\n" }}
+    {%- endfor %}
+{%- endif %}
+{{- system_message }}
+{{- "<|eot_id|>" }}
+
+{#- Custom tools are passed in a user message with some extra guidance #}
+{%- if tools_in_user_message and not tools is none %}
+    {#- Extract the first user message so we can plug it in here #}
+    {%- if messages | length != 0 %}
+        {%- set first_user_message = messages[0]['content']|trim %}
+        {%- set messages = messages[1:] %}
+    {%- else %}
+        {{- raise_exception("Cannot put tools in the first user message when there's no first user message!") }}
+{%- endif %}
+    {{- '<|start_header_id|>user<|end_header_id|>\n\n' -}}
+    {{- "Given the following functions, please respond with a JSON for a function call " }}
+    {{- "with its proper arguments that best answers the given prompt.\n\n" }}
+    {{- 'Respond in the format {"name": function name, "parameters": dictionary of argument name and its value}.' }}
+    {{- "Do not use variables.\n\n" }}
+    {%- for t in tools %}
+        {{- t | tojson(indent=4) }}
+        {{- "\n\n" }}
+    {%- endfor %}
+    {{- first_user_message + "<|eot_id|>"}}
+{%- endif %}
+
+{%- for message in messages %}
+    {%- if not (message.role == 'ipython' or message.role == 'tool' or 'tool_calls' in message) %}
+        {{- '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n'+ message['content'] | trim + '<|eot_id|>' }}
+    {%- elif 'tool_calls' in message %}
+        {%- set tool_call = message.tool_calls[0].function %}
+        {%- if builtin_tools is defined and tool_call.name in builtin_tools and message.tool_calls|length == 1 %}
+            {{- '<|start_header_id|>assistant<|end_header_id|>\n\n' -}}
+            {{- "<|python_tag|>" + tool_call.name + ".call(" }}
+            {%- for arg_name, arg_val in tool_call.arguments | items %}
+                {{- arg_name + '="' + arg_val + '"' }}
+                {%- if not loop.last %}
+                    {{- ", " }}
+                {%- endif %}
+                {%- endfor %}
+            {{- ")" }}
+        {%- else  %}
+            {{- '<|start_header_id|>assistant<|end_header_id|>\n\n' -}}
+            {%- for call in message.tool_calls %}
+                {{- '{"name": "' + call.function.name + '", ' }}
+                {{- '"parameters": ' }}
+                {{- call.function.arguments | tojson }}
+                {{- "}" }}
+                {%- if not loop.last %}
+                    {{- "; " }}
+                {%- endif %}
+            {%- endfor %}
+        {%- endif %}
+        {%- if builtin_tools is defined %}
+            {#- This means we're in ipython mode #}
+            {{- "<|eom_id|>" }}
+        {%- else %}
+            {{- "<|eot_id|>" }}
+        {%- endif %}
+    {%- elif message.role == "tool" or message.role == "ipython" %}
+        {{- "<|start_header_id|>ipython<|end_header_id|>\n\n" }}
+        {%- if message.content is mapping or (message.content is iterable and message.content is not string) %}
+            {{- message.content | tojson }}
+        {%- else %}
+            {{- message.content }}
+        {%- endif %}
+        {{- "<|eot_id|>" }}
+    {%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- '<|start_header_id|>assistant<|end_header_id|>\n\n' }}
+{%- endif %}

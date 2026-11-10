@@ -15,6 +15,13 @@
 #               data (trainset/derived/safeutil_train.parquet, safeutil.py build-data), agent loops (adds a single-turn
 #               loop), reward (safeutil_reward.py), judge preflight and 6,144-token prompts (APIGen-MT policies); runs go to
 #               results/<MODEL_TAG>_SafeUtil/. Name the job too: sbatch --job-name=safeutil-grpo ...
+#   Other base models (qwen4B, llama3.1-8B, glm4-9B, from MODEL_PATH's results/<tag>_<method>/): the training file
+#               defaults to trainset/derived/<tag>/<file> (build-data --tokenizer <p00 merged> --output there), and the
+#               prompt budget is that file's manifest max_prompt_length. Their chat formats go through mosaic.ChatFormat.
+#   N_GPUS      GPUs for FSDP (1). 8-9B full fine-tuning needs both H100s of a gpuplus node:
+#               N_GPUS=2 sbatch --gres=gpu:2 --partition=gpuplus --mem=300G ... Each GPU also runs one vLLM replica.
+#   ROLLOUT_MEM vLLM's share of each GPU (0.5); ACTOR_PARAM_OFFLOAD=1 keeps actor weights on the CPU between passes
+#               (slower; only if the FSDP shards do not fit next to vLLM)
 #   ROLLOUT_N   rollouts per prompt: 4 for mosaic (the paper's group), 8 for safeutil, whose rewards are coarse enough
 #               that 4 rollouts often tie and the group gives GRPO no signal (half the groups in smoke run 38513183)
 #   TRAIN_FILE  default trainset/derived/mosaic_astb_train.parquet (python scripts/post-training/mosaic.py build-data)
@@ -60,10 +67,20 @@ case "$METHOD" in
 esac
 RESPONSE_LEN=5000
 ROLLOUT_N="${ROLLOUT_N:-$DEFAULT_N}"
+source scripts/viking/results_dir.sh
+BASE_TAG="$(model_tag "$MODEL_PATH")"
+if [[ "$BASE_TAG" != qwen2.5-3B ]]; then
+    DEFAULT_TRAIN="trainset/derived/$BASE_TAG/$(basename "$DEFAULT_TRAIN")"
+    BUILD="$BUILD --tokenizer $MODEL_PATH --output $DEFAULT_TRAIN"
+fi
+TRAIN_FILE="${TRAIN_FILE:-$DEFAULT_TRAIN}"
+manifest="${TRAIN_FILE%.parquet}.manifest.json"
+if [[ "$BASE_TAG" != qwen2.5-3B && -f "$manifest" ]]; then
+    PROMPT_LEN="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["max_prompt_length"])' "$manifest")"
+fi
 # Dynamic batching needs one whole sequence to fit a micro-batch: at least prompt + response tokens.
 ACTOR_TOKENS=$(( PROMPT_LEN + RESPONSE_LEN > 10240 ? PROMPT_LEN + RESPONSE_LEN : 10240 ))
 LOGPROB_TOKENS=$(( ACTOR_TOKENS > 16384 ? ACTOR_TOKENS : 16384 ))
-TRAIN_FILE="${TRAIN_FILE:-$DEFAULT_TRAIN}"
 [[ -f "$TRAIN_FILE" ]] || { echo "Missing $TRAIN_FILE (python $BUILD)" >&2; exit 1; }
 LORA_RANK="${LORA_RANK:-16}"
 if (( LORA_RANK > 0 )); then
@@ -79,7 +96,7 @@ else
 fi
 LORA_ALPHA="${LORA_ALPHA:-32}"
 N_GPUS="${N_GPUS:-1}"
-source scripts/viking/results_dir.sh
+if [[ "${ACTOR_PARAM_OFFLOAD:-0}" == 1 ]]; then MODE_ARGS+=(actor_rollout_ref.actor.fsdp_config.param_offload=True); fi
 run="${MODEL_PATH%/}"
 [[ "$(basename "$run")" == merged ]] && run="$(dirname "$run")"
 OUT="${OUT:-$(results_group "$METHOD" "$MODEL_PATH")/$(basename "$run")${suffix}-${SLURM_JOB_ID}}"
@@ -137,7 +154,7 @@ unset ROCR_VISIBLE_DEVICES
     actor_rollout_ref.rollout.n="$ROLLOUT_N" \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
+    actor_rollout_ref.rollout.gpu_memory_utilization="${ROLLOUT_MEM:-0.5}" \
     actor_rollout_ref.rollout.max_model_len="$((PROMPT_LEN + RESPONSE_LEN))" \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.layered_summon=True \
@@ -166,4 +183,6 @@ step="$(cat "$CKPT/checkpoints/latest_checkpointed_iteration.txt")"
     --local_dir "$CKPT/checkpoints/global_step_$step/actor" --target_dir "$CKPT/verl_export"
 "$TRAIN_PYTHON" scripts/post-training/mosaic.py export --export "$CKPT/verl_export" --lora-alpha "$LORA_ALPHA" \
     --output "$OUT/merged"
+# The stop tokens vLLM serves with (GLM-4 ends turns on <|user|> / <|observation|>) come from generation_config.json.
+if [[ -f "$MODEL_PATH/generation_config.json" ]]; then cp "$MODEL_PATH/generation_config.json" "$OUT/merged/"; fi
 echo "$METHOD model: $OUT/merged (step $step)"

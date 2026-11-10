@@ -24,18 +24,19 @@ class SafeUtilSingleTurnLoop(AgentLoopBase):
         rollout = config.actor_rollout_ref.rollout
         cls.response_length = rollout.response_length
         cls.group_size = rollout.n
-        cls.im_end = tokenizer.convert_tokens_to_ids("<|im_end|>")
+        model = getattr(getattr(config.actor_rollout_ref, "model", None), "path", None)
+        cls.fmt = mosaic.ChatFormat(tokenizer, model)
 
     async def run(self, sampling_params: dict[str, Any], **kwargs) -> AgentLoopOutput:
         sample = json.loads(kwargs["extra_info"]["sample_json"])
         prompt_ids = await self.loop.run_in_executor(None, lambda: self.tokenizer.apply_chat_template(
-            sample["messages"], tools=sample["tools"], add_generation_prompt=True, tokenize=True))
+            self.fmt.history(sample["messages"]), tools=sample["tools"], add_generation_prompt=True, tokenize=True))
         metrics = {}
         with simple_timer("generate_sequences", metrics):
             output = await self.server_manager.generate(request_id=uuid4().hex, prompt_ids=prompt_ids,
                                                         sampling_params=sampling_params)
         generated = list(output.token_ids)[:self.response_length]
-        complete = bool(generated) and generated[-1] == self.im_end
+        complete = self.fmt.ended(generated)
         text = self.tokenizer.decode(generated, skip_special_tokens=True)
         turn = mosaic.parse_turn(text)
         status = "truncated" if not complete else {"refuse": "refused", "tool": "tool_call"}.get(turn.kind, "answered")

@@ -405,7 +405,8 @@ def build_data(argv=None):
                         help="share of next_action rows from APIGen-MT; the rest are mid-dialog AgentAlign benign cuts, "
                              "which have no harmful counterpart of the same shape (default 1.0)")
     parser.add_argument("--astb-repo", type=Path, default=mosaic.astb.DEFAULT_REPO)
-    parser.add_argument("--tokenizer", default=mosaic.DEFAULT_MODEL)
+    parser.add_argument("--tokenizer", default=mosaic.DEFAULT_MODEL,
+                        help="hub id, or another base model's p00 merged/ directory")
     parser.add_argument("--revision", default=mosaic.DEFAULT_REVISION)
     parser.add_argument("--max-prompt-length", type=int, default=MAX_PROMPT_LENGTH)
     args = parser.parse_args(argv)
@@ -413,11 +414,15 @@ def build_data(argv=None):
         parser.error("--trainset-root (or TRAINSET_ROOT) is needed for next_action, benign_prompt and harmful_prompt rows")
     import datasets
     from transformers import AutoTokenizer
+    if Path(args.tokenizer).is_dir():
+        args.revision = None  # a local model directory (another base model's p00 merged/) has no hub revision
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, revision=args.revision)
+    fmt = mosaic.ChatFormat(tokenizer, args.tokenizer if Path(args.tokenizer).is_dir() else None)
     system_text = mosaic.load_system_text()
 
     def length(messages, tools):
-        return len(tokenizer.apply_chat_template(messages, tools=tools, add_generation_prompt=True, tokenize=True))
+        return len(tokenizer.apply_chat_template(fmt.history(messages), tools=tools, add_generation_prompt=True,
+                                                 tokenize=True))
 
     def fits(messages, tools):
         return length(messages, tools) <= args.max_prompt_length
@@ -428,7 +433,7 @@ def build_data(argv=None):
         env_manager = mosaic.astb.load_env_manager(args.astb_repo)
         tasks = mosaic.astb.load_data(args.astb_repo)
         random.Random(f"{SEED}:astb").shuffle(tasks)
-        fitting = [t for t in tasks if mosaic.prompt_length(tokenizer, t, system_text, env_manager)
+        fitting = [t for t in tasks if mosaic.prompt_length(tokenizer, t, system_text, env_manager, fmt)
                    <= args.max_prompt_length]
         kept = split_by_label(fitting, args.astb, args.astb_benign_share)
         for task in kept:
@@ -488,8 +493,9 @@ def build_data(argv=None):
     kinds = Counter(r["extra_info"]["kind"] for r in records)
     benign = sum(r["extra_info"]["fulfillable"] for r in records)
     manifest = dict(method="SafeUtil GRPO", seed=SEED, rows=len(records), kinds=dict(kinds), benign=benign,
-                    harmful=len(records) - benign, notes=notes, tokenizer=args.tokenizer, revision=args.revision,
+                    harmful=len(records) - benign, notes=notes, tokenizer=str(args.tokenizer), revision=args.revision,
                     max_prompt_length=args.max_prompt_length, apigen_share=args.apigen_share,
+                    tokenizer_text_calls=fmt.text_calls,
                     astb_benign_share=args.astb_benign_share,
                     system_text_sha256=hashlib.sha256(system_text.encode()).hexdigest(),
                     reward=dict(refuse_harmful=REFUSE_HARMFUL, refuse_harmful_late=REFUSE_HARMFUL_LATE,

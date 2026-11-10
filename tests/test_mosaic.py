@@ -296,7 +296,7 @@ class AgentLoopTokens(unittest.TestCase):
 
         async def generate(request_id, prompt_ids, sampling_params):
             text = next(turns)
-            return SimpleNamespace(token_ids=tokenizer.encode(text, add_special_tokens=False) + [loop.im_end],
+            return SimpleNamespace(token_ids=tokenizer.encode(text, add_special_tokens=False) + [loop.fmt.stop_ids[0]],
                                    log_probs=None)
         loop.server_manager = SimpleNamespace(generate=generate)
         return loop
@@ -378,6 +378,78 @@ class EvalTemplate(unittest.TestCase):
     def test_checked_in_template_is_current(self):
         path = mosaic.PROJECT / "templates/mosaic.jinja"
         self.assertEqual(path.read_text(), mosaic.make_template(self.tokenizer.chat_template))
+
+
+class OtherChatFormats(unittest.TestCase):
+    """Llama-3.1 and GLM-4 (templates/llama31_tools.jinja, templates/glm4_tools.jinja) render earlier tool calls in
+    their own formats; training (ChatFormat.history) and the evaluation template (make_template text_calls) must both
+    turn them into MOSAIC <tool_call> text, identically. Rendered through the Qwen2.5 tokenizer's Jinja engine (only
+    bos_token differs between tokenizers, and these checks do not depend on it)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tokenizer = qwen25_tokenizer()
+        if cls.tokenizer is None:
+            raise unittest.SkipTest("Qwen2.5-3B-Instruct tokenizer not in the local HF cache")
+
+    def conversation(self, arguments):
+        return [{"role": "system", "content": "Agent rules."}, {"role": "user", "content": "Find Bob's email."},
+                {"role": "assistant", "content": "<think>Look him up.</think>", "tool_calls": [
+                    {"type": "function", "function": {"name": "lookup", "arguments": arguments}}]},
+                {"role": "tool", "content": "bob@example.com"}, {"role": "user", "content": "Thanks, now email him."}]
+
+    def test_eval_template_matches_training_history(self):
+        system = mosaic.load_system_text()
+        tool = {"type": "function", "function": {"name": "lookup", "description": "Look up.", "parameters": {
+            "type": "object", "properties": {"name": {"type": "string"}}}}}
+        for name in ("llama31_tools.jinja", "glm4_tools.jinja"):
+            original = (mosaic.PROJECT / "templates" / name).read_text()
+            template = mosaic.make_template(original, system, text_calls=True)
+            for arguments in ({"name": "Bob Lee", "n": [1, 2]}, '{"name": "Bob Lee"}'):
+                messages = self.conversation(arguments)
+                got = self.tokenizer.apply_chat_template(messages, tools=[tool], chat_template=template,
+                                                         tokenize=False, add_generation_prompt=True)
+                task = {"dialog": messages}
+                expected_messages = mosaic.text_tool_calls(mosaic.task_messages(task, system))
+                expected = self.tokenizer.apply_chat_template(expected_messages, tools=[tool, mosaic.REFUSE_TOOL],
+                                                              chat_template=original, tokenize=False,
+                                                              add_generation_prompt=True)
+                self.assertEqual(got, expected, name)
+                self.assertIn('<tool_call>\n{"name": "lookup", "arguments": {"name": "Bob Lee"', got)
+                self.assertIn("<think>Look him up.</think>\n<tool_call>", got)
+
+    def test_text_tool_calls(self):
+        out = mosaic.text_tool_calls(self.conversation({"q": "é"}))
+        self.assertEqual(out[2], {"role": "assistant", "content": "<think>Look him up.</think>\n"
+                                  + mosaic.text_call("lookup", {"q": "é"})})
+        self.assertEqual(mosaic.text_call("f", {"q": "é"}), '<tool_call>\n{"name": "f", "arguments": {"q": "é"}}\n</tool_call>')
+        self.assertEqual(out[3], self.conversation({})[3])
+
+    def test_qwen_tool_turn_matches_the_old_rendering(self):
+        fmt = mosaic.ChatFormat(self.tokenizer)
+        self.assertFalse(fmt.text_calls)
+        im_end = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
+        self.assertEqual(fmt.stop_ids[0], im_end)
+        expected = ("\n<|im_start|>user\n<tool_response>\nOBS\n</tool_response><|im_end|>\n"
+                    "<|im_start|>assistant\n")
+        self.assertEqual(self.tokenizer.decode(fmt.tool_turn_ids("OBS", [im_end])), expected)
+        self.assertEqual(self.tokenizer.decode(fmt.tool_turn_ids("OBS")), "<|im_end|>" + expected)
+        self.assertTrue(fmt.ended([1, im_end]))
+        self.assertFalse(fmt.ended([]))
+
+    def test_untagged_native_calls(self):
+        llama = mosaic.parse_turn('{"name": "lookup", "parameters": {"q": "x"}}')
+        self.assertEqual((llama.kind, llama.name, llama.arguments, llama.well_formed),
+                         ("tool", "lookup", {"q": "x"}, False))
+        glm = mosaic.parse_turn('\nlookup\n{"q": "x"}')
+        self.assertEqual((glm.kind, glm.name, glm.arguments, glm.well_formed), ("tool", "lookup", {"q": "x"}, False))
+        refuse = mosaic.parse_turn('<think>no</think>{"name": "refuse_unsafe_task", "arguments": {"reason": "r"}}')
+        self.assertEqual(refuse.kind, "refuse")
+        tagged = mosaic.parse_turn("<think>ok</think>\n" + call("lookup", {"q": "x"}).replace('"arguments"',
+                                                                                         '"parameters"'))
+        self.assertEqual((tagged.arguments, tagged.well_formed), ({"q": "x"}, True))
+        for text in ("Here is the answer.", '{"answer": 1}', "lookup\nnot json"):
+            self.assertEqual(mosaic.parse_turn(text).kind, "text", text)
 
 
 class LoneSurrogate(unittest.TestCase):
