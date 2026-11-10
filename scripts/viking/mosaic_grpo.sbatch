@@ -36,6 +36,8 @@
 #               LoRA (~14 GB each, ~37 GB with full fine-tuning optimizer state), too big for the 100 GB home quota,
 #               so they and verl_export/ go to scratch under <CKPT_ROOT>/<run folder name>; the last 2 are kept
 #               (1 with full fine-tuning).
+#   MERGED_ROOT default /mnt/longship/users/$USER/merged-archive. merged/ (8-19 GB) is written to
+#               <MERGED_ROOT>/<results group>/<run folder name>/merged and linked into the run folder, so home stays small.
 # Output: results/<MODEL_TAG>_MOSAIC/<run>-<jobid>/merged (checkpoints and verl_export/ in scratch), and rollouts/<step>.jsonl:
 # every training trajectory (4 prompts x ROLLOUT_N per step) with its reward terms, refusal status, task id and fulfillable label, a few
 # hundred MB per epoch. Evaluate merged/ with
@@ -102,7 +104,8 @@ run="${MODEL_PATH%/}"
 OUT="${OUT:-$(results_group "$METHOD" "$MODEL_PATH")/$(basename "$run")${suffix}-${SLURM_JOB_ID}}"
 OUT="${OUT%/}"
 CKPT="${CKPT_ROOT:-/mnt/scratch/users/$USER/mosaic-checkpoints}/$(basename "$OUT")"
-mkdir -p "$OUT" "$CKPT"
+MERGED="${MERGED_ROOT:-/mnt/longship/users/$USER/merged-archive}/$(basename "$(dirname "$OUT")")/$(basename "$OUT")/merged"
+mkdir -p "$OUT" "$CKPT" "$(dirname "$MERGED")"
 export PYTHONPATH="$PWD/scripts/post-training:$PWD/scripts/eval${PYTHONPATH:+:$PYTHONPATH}"
 export ASTB_REPO="${ASTB_REPO:-$PWD/third_party/Agent-SafetyBench}"
 # Slurm exports ROCR_VISIBLE_DEVICES (AMD) next to CUDA_VISIBLE_DEVICES; verl's workers refuse to start with both.
@@ -182,7 +185,8 @@ step="$(cat "$CKPT/checkpoints/latest_checkpointed_iteration.txt")"
 "$TRAIN_PYTHON" -m verl.model_merger merge --backend fsdp \
     --local_dir "$CKPT/checkpoints/global_step_$step/actor" --target_dir "$CKPT/verl_export"
 "$TRAIN_PYTHON" scripts/post-training/mosaic.py export --export "$CKPT/verl_export" --lora-alpha "$LORA_ALPHA" \
-    --output "$OUT/merged"
+    --output "$MERGED"
+ln -sfn "$MERGED" "$OUT/merged"
 # The stop tokens vLLM serves with (GLM-4 ends turns on <|user|> / <|observation|>) come from generation_config.json.
-if [[ -f "$MODEL_PATH/generation_config.json" ]]; then cp "$MODEL_PATH/generation_config.json" "$OUT/merged/"; fi
+if [[ -f "$MODEL_PATH/generation_config.json" ]]; then cp "$MODEL_PATH/generation_config.json" "$MERGED/"; fi
 echo "$METHOD model: $OUT/merged (step $step)"
