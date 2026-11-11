@@ -17,7 +17,8 @@ Project choices:
     evaluation see the same tokens. Search sets: n_benign from trainset/derived/align_benign.jsonl (held-out
     AgentAlign benign, same format as the harmful slice) and n_harmful from trainset/derived/select_refusal.jsonl
     (held-out AgentAlign harmful), each cut before its first assistant turn. No evaluation benchmark is touched.
-  * Benign "performed" also requires a parsed Hermes tool call (`<tool_call>{"name": ...}</tool_call>`): the paper
+  * Benign "performed" also requires a parsed tool call (Hermes `<tool_call>{"name": ...}</tool_call>`, or Llama-3.1's
+    bare JSON / GLM-4's `name\n{JSON}` as the evaluation's parsers read them): the paper
     only checks for refusal phrases, but here a prefix can make the agent stop acting (empty or prose replies)
     without refusing, and 999/1000 align_benign tasks start with a tool call. The generator prompt says so.
   * Refusal phrases are matched in the response only: a match inside the injected prefix does not count (a match
@@ -49,6 +50,8 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from safety_template import MODEL, REVISION, load_chat_template, sha256_text  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "eval"))
+from tool_parsers import parse_glm4, parse_llama3  # noqa: E402
 from train_lora import git_commit, load_jsonl  # noqa: E402
 
 PROJECT = Path(__file__).resolve().parents[2]
@@ -142,7 +145,9 @@ TOOL_CALL = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
 
 
 def has_tool_call(response):
-    """True if the response holds a Hermes tool call with a JSON body naming a function."""
+    """True if the response holds a Hermes tool call with a JSON body naming a function (Qwen), or is a native
+    Llama-3.1 JSON call or GLM-4 `name\n{JSON}` call as the evaluation's tool parsers read them
+    (scripts/eval/tool_parsers.py llama3_json_full / glm4_native)."""
     for body in TOOL_CALL.findall(response):
         try:
             call = json.loads(body)
@@ -150,7 +155,9 @@ def has_tool_call(response):
             continue
         if isinstance(call, dict) and call.get("name"):
             return True
-    return False
+    if "<tool_call>" in response:
+        return False
+    return bool(parse_llama3(response)) or bool(parse_glm4(response)[1])
 
 
 def is_refusal(prefix, response):
@@ -453,7 +460,9 @@ def main(argv=None):
     t.add_argument("--prefix", required=True)
     t.add_argument("--out", required=True)
     for p in (s, t):
-        p.add_argument("--base-model", default=MODEL, help="hub id whose chat template is wrapped (local HF cache)")
+        p.add_argument("--base-model", default=MODEL, help="hub id whose chat template is wrapped (local HF cache), or a "
+                       "model directory (its chat_template.jinja / tokenizer_config.json), e.g. the merged model itself "
+                       "so the prefix wraps the template its evaluation serves")
         p.add_argument("--revision", default=REVISION)
         p.add_argument("--separator", choices=sorted(SEPARATORS), default="none",
                        help="text after the prefix: none (paper) or blank-line (\\n\\n)")

@@ -31,7 +31,12 @@ def load_safety_text():
 
 
 def load_chat_template(model=MODEL, revision=REVISION):
-    """The checkpoint's own template from tokenizer_config.json in the local HF cache (no download)."""
+    """The checkpoint's own template from tokenizer_config.json in the local HF cache (no download), or from a local
+    model directory's chat_template.jinja (else its tokenizer_config.json)."""
+    if Path(model).is_dir():
+        if (Path(model) / "chat_template.jinja").is_file():
+            return (Path(model) / "chat_template.jinja").read_text()
+        return json.loads((Path(model) / "tokenizer_config.json").read_text())["chat_template"]
     from huggingface_hub import try_to_load_from_cache
     path = try_to_load_from_cache(model, "tokenizer_config.json", revision=revision)
     if not isinstance(path, str):

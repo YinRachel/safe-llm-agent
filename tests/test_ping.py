@@ -76,6 +76,13 @@ class ToolCallTests(unittest.TestCase):
                      "<tool_call>\n{not json}\n</tool_call>", '<tool_call>\n{"name": "f"'):
             self.assertFalse(ping.has_tool_call(text), text)
 
+    def test_native_llama_and_glm_calls(self):
+        self.assertTrue(ping.has_tool_call('{"name": "f", "parameters": {"a": 1}}'))
+        self.assertTrue(ping.has_tool_call('<|python_tag|>{"name": "f", "parameters": {"a": [{"b": 2}]}}<|eom_id|>'))
+        self.assertTrue(ping.has_tool_call('f\n{"a": 1}'))
+        for text in ('Sure, {"a": 1}', 'I will call f with {"a": 1}.', "Done.\nThanks"):
+            self.assertFalse(ping.has_tool_call(text), text)
+
 
 class ParsingTests(unittest.TestCase):
     def test_parse_prefixes(self):
