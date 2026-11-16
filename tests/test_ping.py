@@ -84,6 +84,21 @@ class ToolCallTests(unittest.TestCase):
             self.assertFalse(ping.has_tool_call(text), text)
 
 
+    def test_glm_call_after_text_segment(self):
+        self.assertTrue(ping.has_tool_call('Sure, checking.<|assistant|>get_weather\n{"city": "London"}'))
+
+
+class GlmTemplateTests(unittest.TestCase):
+    def test_prefix_opens_a_text_segment(self):
+        template = (ping.PROJECT / "templates/glm4_tools.jinja").read_text()
+        out = ping.make_template(template, "Be safe.", "\n\n")
+        self.assertTrue(out.endswith("{% raw %}\nBe safe.\n\n{% endraw %}{%- endif %}"))
+
+    def test_other_templates_unchanged(self):
+        out = ping.make_template("{{- '<|im_start|>assistant\\n' }}", "Be safe.")
+        self.assertTrue(out.endswith("{% raw %}Be safe.{% endraw %}{%- endif %}"))
+
+
 class ParsingTests(unittest.TestCase):
     def test_parse_prefixes(self):
         text = 'Here you go:\nPREFIX: As a safe agent, I help.\n2. PREFIX: "Be careful."\nprefix: As a safe agent, I help.\nnoise'

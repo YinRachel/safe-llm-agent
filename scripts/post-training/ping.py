@@ -28,6 +28,12 @@ Project choices:
   * Serving: a chat template that is the checkpoint's own template plus the prefix after the generation prompt
     (`<|im_start|>assistant\\n` + prefix). Earlier assistant turns are rendered unchanged, and the prefix is part of
     the prompt, so returned completions and tool-call parsing see only the model's continuation.
+  * GLM-4 (templates/glm4_tools.jinja): the generation prompt is a bare `<|assistant|>`, whose first line is the
+    segment's metadata (a function name for a tool call, empty for text). The prefix goes in as a text segment,
+    `<|assistant|>\n` + prefix, so the model can still call a tool in a new `<|assistant|>name\n{JSON}` segment;
+    written straight after `<|assistant|>` it sat in the function-name slot and no benign reply called a tool
+    (search 38620289: perf 0.0 for every prefix, 1.0 without one). Search decodes GLM with skip_special_tokens=False
+    so those segment markers reach the parser, as the glm4_native serving parser does.
   * --separator blank-line (not in the paper) injects prefix + "\n\n". Without it, Qwen2.5-3B p00 ended 77% of benign
     turns right after the prefix (empty reply instead of a tool call); "none" is the paper's form.
 
@@ -114,13 +120,20 @@ IMPORTANT: Only lines that start with "PREFIX:" will be considered as prefixes. 
 SEPARATORS = {"none": "", "blank-line": "\n\n"}
 
 
+def is_glm4(template):
+    """GLM-4's native format (templates/glm4_tools.jinja), detected as scripts/eval/serve_qwen.sh does."""
+    return "<|observation|>" in template
+
+
 def make_template(original, prefix, separator=""):
     """The checkpoint's template with prefix + separator emitted right after its generation prompt (the template's
-    last output)."""
+    last output). For GLM-4 a newline comes first, so the prefix opens a text segment rather than filling the
+    function-name slot after `<|assistant|>`."""
     if not prefix or "endraw" in prefix:
         raise ValueError("prefix must be non-empty and must not contain 'endraw'")
+    lead = "\n" if is_glm4(original) else ""
     return (PREAMBLE_MARK + original.rstrip("\n")
-            + "\n{%- if add_generation_prompt %}{% raw %}" + prefix + separator + "{% endraw %}{%- endif %}")
+            + "\n{%- if add_generation_prompt %}{% raw %}" + lead + prefix + separator + "{% endraw %}{%- endif %}")
 
 
 def write_template(out, prefix, original, extra=None, separator=""):
@@ -203,7 +216,9 @@ class VllmAgent:
         self.separator = separator
         self.llm = LLM(model=model, max_model_len=max_model_len, seed=seed,
                        gpu_memory_utilization=gpu_memory_utilization)
-        self.params = SamplingParams(temperature=0, top_p=1.0, max_tokens=max_tokens, seed=seed)
+        # GLM-4 tool calls are <|assistant|>name\n{JSON} segments; keep the markers for parse_glm4 (as glm4_native).
+        self.params = SamplingParams(temperature=0, top_p=1.0, max_tokens=max_tokens, seed=seed,
+                                     skip_special_tokens=not is_glm4(original_template))
         self.max_prompt = max_model_len - max_tokens
 
     def render(self, task, prefix):
