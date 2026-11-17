@@ -170,7 +170,10 @@ def parse_json_format(message):
     for candidate in extract_json_candidates(message):
         parsed = parse_json_like(candidate)
         if isinstance(parsed, (list, dict)):
-            return json.dumps(parsed)
+            try:
+                return json.dumps(parsed)
+            except (TypeError, ValueError):  # literal_eval of e.g. `[{"message": ...}]` holds Ellipsis: not JSON
+                continue
     return "[]"
 
 
