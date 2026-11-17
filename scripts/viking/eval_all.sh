@@ -7,6 +7,7 @@
 # MODEL_PATH: a local merged dir, or a hub id (MODEL_REVISION defaults to the pinned commit for the two base models).
 # CHAT_TEMPLATE: optional serving template, e.g. templates/ptst.jinja (F4 PTST). The GLM-4 and Llama-3.1 hub models
 # default to their training templates (templates/glm4_tools.jinja, templates/llama31_tools.jinja); merged runs carry theirs.
+# BENCHMARKS="asb tau_bench" submits only those (labels as in results/eval_index.tsv), e.g. to rerun an invalid run.
 # Extra sbatch options for every job: SBATCH_EXTRA="--mail-type=END --mail-user=..." (CUDA_MODULE etc. are exported).
 # SCAFFOLD=mosaic: evaluate under the MOSAIC inference scaffold, as the paper deploys MOSAIC models:
 #   templates/mosaic.jinja (Qwen2.5-3B) or templates/mosaic_<model tag>.jinja (qwen4B, llama3.1-8B, glm4-9B; built by
@@ -70,6 +71,7 @@ index=results/eval_index.tsv
 submit() {  # benchmark-label sbatch-script [script args...]
     local label="$1"; shift
     local id
+    if [[ -n "${BENCHMARKS:-}" && " $BENCHMARKS " != *" $label "* ]]; then return 0; fi
     # shellcheck disable=SC2086
     id="$(sbatch --parsable --export=ALL --job-name="eval-${TAG}-${label}" ${SBATCH_EXTRA:-} "$@")"
     printf '%s\t%s\t%s\t%s\t%s\n' "$TAG" "$label" "${id%%;*}" "$MODEL_PATH" "$template_sha" >> "$index"
