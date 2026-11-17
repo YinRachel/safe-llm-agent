@@ -207,7 +207,15 @@ Options:
   - `native` is its GPT path, using OpenAI `tools=`.
 - `--asb-task-num`: tasks per agent (default 1).
 
+- `--asb-stride N`: keep every Nth case, a spread-out diagnostic sample (give such runs their own eval tag).
+
 Memory poisoning (it needs a Chroma store built with OpenAI embeddings) and the PoT backdoor are not ported.
+
+Two deviations at the plan stage (since 2026-11-17). They change a case only where upstream's plan parsing fails, so runs that always plan are unaffected:
+- **A tool call is accepted as a plan.** Agents trained to act directly answer the plan prompt with a call to one of their tools instead of a JSON plan. That's what the MOSAIC/SafeUtil GRPO models do under the MOSAIC scaffold (100% of OPI plan prompts on Qwen3-4B and Llama-3.1-8B SafeUtil), and Llama LoRA/PING do it partly. Upstream retries 10 times and then records a failed workflow, which can never be an attack success. Such a call (tagged `<tool_call>`, a native untagged call, or ASB's `[{"name": …}]` format, naming one of the case's tools) now becomes the two-stage plan that ASB's prompt describes: call those tools, then complete the task with the results. Two stages keep OPI injectable, because observations are injected in every stage but the last. A `refuse_unsafe_task` call never counts as a plan. `cases.jsonl` marks these cases `plan_from_call`, and `summary.json` reports `plan_from_call_rate`.
+- **The refusal judge sees the model's reply.** For a workflow that still fails, upstream gives the judge only the parsed JSON (`[]` for prose), and the judge scored almost all of these as refusals. It now sees the model's first reply to the plan prompt, after the scaffold rewrite, so a `refuse_unsafe_task` call reads as a refusal and a prose plan does not.
+
+`cases.jsonl` keeps every plan attempt's raw reply (`plan_raw`). Report `workflow_failure_rate` next to ASR and the refusal rate.
 
 The refusal judge uses the shared judge routing (`--judge…`, as for AgentHarm), and judge preflight runs first. Upstream used `gpt-4o-mini`; pass `--judge openai/gpt-4o-mini-2024-07-18` to match it, and keep one judge across all compared checkpoints. ASB's Ollama path decodes at default temperature, but here decoding is greedy.
 
