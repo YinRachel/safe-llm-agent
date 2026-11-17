@@ -560,6 +560,8 @@ def main(argv=None):
     parser.add_argument("--asb-tool-mode", choices=["prompted", "native"], default="prompted",
                         help="prompted: ASB's open-weight path (tool list in the prompt); native: its GPT path (tools=)")
     parser.add_argument("--asb-task-num", type=positive, default=1, help="tasks per ASB agent (upstream default 1)")
+    parser.add_argument("--asb-stride", type=positive, default=1,
+                        help="keep every Nth ASB case (a spread-out diagnostic sample; 1 = all, the benchmark)")
     parser.add_argument("--astb-repo", type=Path, default=PROJECT_ROOT / "third_party/Agent-SafetyBench")
     parser.add_argument("--data", type=Path)
     parser.add_argument("--output", type=Path)

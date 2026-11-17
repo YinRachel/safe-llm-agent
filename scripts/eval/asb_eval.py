@@ -284,17 +284,26 @@ class Target:
                                                     temperature=0, seed=self.seed, **kwargs)
         return reply.choices[0].message
 
-    def text(self, messages):
+    @staticmethod
+    def _log(log, message):
+        """Keep the server's reply as it came, before any rewrite, so a failed plan can be read afterwards."""
+        if log is not None:
+            log.append(dict(content=message.content, tool_calls=[
+                {"name": c.function.name, "arguments": c.function.arguments} for c in message.tool_calls or []]))
+
+    def text(self, messages, log=None):
         """Prompted mode reads raw text; if the server's tool parser still split off a <tool_call>, put it back."""
         message = self.chat(messages)
+        self._log(log, message)
         if message.tool_calls:
             return json.dumps([{"name": c.function.name, "parameters": c.function.arguments} for c in message.tool_calls])
         return mosaic_output(message.content or "")
 
-    def respond(self, messages, tools=None, json_return=False):
-        """Returns (response_message, tool_calls) like pyopenagi Response."""
+    def respond(self, messages, tools=None, json_return=False, log=None):
+        """Returns (response_message, tool_calls) like pyopenagi Response; `log` (a list) collects the raw replies."""
         if self.tool_mode == "native":
             message = self.chat(messages, tools)
+            self._log(log, message)
             try:
                 calls = [{"name": c.function.name, "parameters": json.loads(c.function.arguments)}
                          for c in message.tool_calls] if message.tool_calls else None
@@ -303,10 +312,10 @@ class Target:
             return mosaic_output(message.content), calls
         if tools:
             messages[-1]["content"] += TOOL_PREFIX + json.dumps(tools) + TOOL_SUFFIX  # mutates history, as upstream
-            text = self.text(messages)
+            text = self.text(messages, log)
             calls = parse_text_tool_calls(text)
             return (None, calls) if calls else (text, None)
-        text = self.text(messages)
+        text = self.text(messages, log)
         return (parse_json_format(text) if json_return else text), None
 
 
@@ -329,9 +338,9 @@ def run_case(target, case):
     messages = [{"role": "system", "content": "".join(case["config"]["description"])},
                 {"role": "system", "content": plan_instruction(tools)},
                 {"role": "user", "content": task_input}]
-    rounds, workflow = 0, None
+    rounds, workflow, plan_raw = 0, None, []
     for attempt in range(PLAN_MAX_FAIL_TIMES):  # BaseAgent.automatic_workflow
-        response, _ = target.respond(messages, json_return=True)
+        response, _ = target.respond(messages, json_return=True, log=plan_raw)
         workflow = check_workflow(response)
         rounds += 1
         if workflow:
@@ -369,7 +378,8 @@ def run_case(target, case):
         else:
             messages.append({"role": "assistant", "content": f"[Thinking]: {response}"})
         rounds += 1
-    return dict(messages=messages, workflow_failure=not workflow, tool_call_success=tool_call_success, rounds=rounds)
+    return dict(messages=messages, workflow_failure=not workflow, tool_call_success=tool_call_success, rounds=rounds,
+                plan_raw=plan_raw)
 
 
 def call_tools(tool_calls, results, inject, injection):
@@ -436,7 +446,8 @@ def run(args, output, judge):
     from openai import OpenAI
     import os
     check_repo(args.asb_repo)
-    cases = build_cases(args.asb_repo, args.asb_attacks, args.asb_attack_types, args.asb_task_num)[:args.limit]
+    cases = build_cases(args.asb_repo, args.asb_attacks, args.asb_attack_types, args.asb_task_num)
+    cases = cases[::getattr(args, "asb_stride", 1)][:args.limit]
     data_files = ["data/agent_task.jsonl", "data/all_normal_tools.jsonl", "data/all_attack_tools.jsonl"]
     (output / "dataset.sha256").write_text("".join(
         f"{hashlib.sha256((Path(args.asb_repo) / f).read_bytes()).hexdigest()}  {f}\n" for f in data_files))
@@ -463,14 +474,15 @@ def run(args, output, judge):
                 row.update(attack_success=check_attack_success(result["messages"], tool["Attack goal"]),
                            original_success=check_original_success(result["messages"], case["normal_tools"]),
                            refused=verdict == "0", judge_output=verdict, workflow_failure=result["workflow_failure"],
-                           tool_call_success=result["tool_call_success"], messages=result["messages"])
+                           tool_call_success=result["tool_call_success"], messages=result["messages"],
+                           plan_raw=result["plan_raw"])
                 rows.append(row)
                 if verdict not in ("0", "1"):
                     judge_errors.append(case["id"])
             else:
                 errors.append(case["id"])
             stream.write(json.dumps(row) + "\n")
-    summary = dict(benchmark="asb", upstream_commit=ASB_COMMIT, tool_mode=args.asb_tool_mode,
+    summary = dict(benchmark="asb", upstream_commit=ASB_COMMIT, tool_mode=args.asb_tool_mode, stride=getattr(args, "asb_stride", 1),
                    output_filter="mosaic" if os.environ.get("MOSAIC_SCAFFOLD") == "1" else None, cases=len(cases),
                    completed=len(rows), errored_case_ids=errors, refusal_judge_error_case_ids=judge_errors,
                    valid=not errors and not judge_errors and len(rows) == len(cases), results=aggregate(rows))

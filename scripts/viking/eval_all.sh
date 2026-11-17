@@ -8,6 +8,7 @@
 # CHAT_TEMPLATE: optional serving template, e.g. templates/ptst.jinja (F4 PTST). The GLM-4 and Llama-3.1 hub models
 # default to their training templates (templates/glm4_tools.jinja, templates/llama31_tools.jinja); merged runs carry theirs.
 # BENCHMARKS="asb tau_bench" submits only those (labels as in results/eval_index.tsv), e.g. to rerun an invalid run.
+# ASB_ARGS="--asb-stride 100" passes evaluate.py options to the ASB job only (a diagnostic sample; give it its own TAG).
 # Extra sbatch options for every job: SBATCH_EXTRA="--mail-type=END --mail-user=..." (CUDA_MODULE etc. are exported).
 # SCAFFOLD=mosaic: evaluate under the MOSAIC inference scaffold, as the paper deploys MOSAIC models:
 #   templates/mosaic.jinja (Qwen2.5-3B) or templates/mosaic_<model tag>.jinja (qwen4B, llama3.1-8B, glm4-9B; built by
@@ -81,7 +82,8 @@ submit agentharm_benign scripts/viking/agentharm.sbatch
 submit agentharm_harmful scripts/viking/agent_benchmarks.sbatch agentharm-harmful
 # BFCL multi-turn took 12+ h on Llama-3.1-8B (510/800 samples at the 12 h default); BFCL_TIME overrides.
 submit bfcl_multiturn --time="${BFCL_TIME:-24:00:00}" scripts/viking/agent_benchmarks.sbatch bfcl-multiturn
-submit asb scripts/viking/agent_benchmarks.sbatch asb
+# shellcheck disable=SC2086
+submit asb scripts/viking/agent_benchmarks.sbatch asb ${ASB_ARGS:-}
 submit agent_safetybench scripts/viking/agent_benchmarks.sbatch agent-safetybench
 submit tau_bench scripts/viking/agent_benchmarks.sbatch tau-bench
 submit harmbench scripts/viking/harmbench.sbatch --model "$MODEL_PATH" "${harmbench_template[@]}"
