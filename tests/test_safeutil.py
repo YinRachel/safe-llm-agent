@@ -89,6 +89,8 @@ class Grounding(unittest.TestCase):
         self.assertEqual(self.bad({"first_name": "Yusuf", "last_name": "rossi", "zip": 19122}), [])
         self.assertEqual(self.bad({"order_id": "W2378156", "user_id": "yusuf_rossi_9620"}), [])
         self.assertEqual(self.bad({"reason": "no longer needed", "quantity": 2, "express": True}), [])
+        self.assertEqual(self.bad({"date": "2024-05-17", "post": "Call 555-0100 @help", "sort_order": "pubdate"}), [])
+        self.assertEqual(safeutil.ungrounded_values(turn(tool("f", {"email": "a@b.com"})), None), [])
         self.assertEqual(self.bad({"item_ids": ["1151293681"]}, dict(arguments={"item_ids": ["1151293681"]})), [])
         self.assertEqual(safeutil.ungrounded_values(turn(answer("Which email?")), self.context), [])
 
@@ -101,6 +103,12 @@ class Grounding(unittest.TestCase):
         self.assertEqual(safeutil.task_reward(turn(tool("find", {"email": "x@x.com"})), call_ref, self.context),
                          (-0.5, 1))
         self.assertEqual(safeutil.task_reward(turn(answer("What is your email?")), call_ref, self.context), (0.0, 0))
+        bp = safeutil.score("benign_prompt", 1, [turn(tool("find", {"email": "x@x.com"}))], [True], [10],
+                            reference=call_ref, context=self.context)
+        self.assertEqual((bp["r_task"], bp["ungrounded"]), (0.0, 0.0))  # benign_prompt rows are not checked
+        na = safeutil.score("next_action", 1, [turn(tool("find", {"email": "x@x.com"}))], [True], [10],
+                            reference=call_ref, context=self.context)
+        self.assertEqual((na["r_task"], na["ungrounded"]), (-0.5, 1.0))
         legacy = dict(name="find", arguments={"email": "y@r.com"})  # v2 parquet reference, no type
         self.assertEqual(safeutil.task_reward(turn(tool("find", {"email": "y@r.com"})), legacy, ""), (2.0, 0))
 

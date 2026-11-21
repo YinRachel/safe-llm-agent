@@ -30,7 +30,7 @@ def judge_actor():
 async def compute_score(data_source, solution_str, ground_truth, extra_info=None, **kwargs):
     kind = extra_info["kind"]
     fulfillable = int(extra_info["fulfillable"])
-    failures, task_score, reference, context = 0, None, None, ""
+    failures, task_score, reference, context = 0, None, None, None
     summary = extra_info["mosaic"]
     if kind == "astb":
         turns = [mosaic.parse_turn(text) for text in summary["turns"]]

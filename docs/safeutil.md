@@ -69,10 +69,12 @@ v3 changes (`--target-mix call=1` rebuilds call-only cuts):
   20%), `ask` (a text reply right after a user turn: asking for identity or details, confirming before acting; 25%),
   `reply` (a text reply after a tool result; 15%) and `call` (40%). Replies in refusal wording or with an inline
   JSON call are not targets.
-- **Grounded arguments.** A call's identifier-like values (strings with a digit or `@`, strings under identity keys
-  such as `email`, `first_name`, `zip`, `*_id`, integers of 4+ digits) must appear in the conversation (messages and
-  earlier calls; tool schemas do not count, so `#W0000000` is not grounded) or be a reference value; otherwise
-  r_task gets −0.5. The `#W0000000` example stays in the tool descriptions (τ2 has it too); the penalty teaches the
+- **Grounded arguments (next_action rows).** A call's identifier-like values (single-token strings with a digit or
+  `@`, single-token strings under `email`, `first_name`, `last_name`, `zip`, `phone`, `*_id` keys, integers of 4+
+  digits; not dates, times or free text with spaces) must appear in the conversation (messages and earlier calls; tool
+  schemas do not count, so `#W0000000` is not grounded) or be a reference value; otherwise r_task gets −0.5.
+  benign_prompt rows are not checked: their AgentAlign references infer values the instruction never states (a
+  profile name from "Starbucks", amounts in wei), and 14% of them would fail. The `#W0000000` example stays in the tool descriptions (τ2 has it too); the penalty teaches the
   policy not to copy it.
 - **Call matching pays 2 × the share of reference arguments**, so the right tool with invented arguments earns 0 −
   0.5, below a question (0 on a call target, 2 on a text target).
