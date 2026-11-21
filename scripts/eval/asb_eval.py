@@ -194,8 +194,8 @@ def check_workflow(message):
         workflow = json.loads(message)
         if not isinstance(workflow, list):
             workflow = [workflow]
-        for step in workflow:
-            if "message" not in step or "tool_use" not in step:
+        for step in workflow:  # a step that is no object (e.g. a plan written as [1, 2]) is an invalid plan, not a crash
+            if not isinstance(step, dict) or "message" not in step or "tool_use" not in step:
                 return None
         return workflow
     except json.JSONDecodeError:

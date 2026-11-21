@@ -55,6 +55,10 @@ class DirectCallPlan(unittest.TestCase):
         plan = self.plan(None, [{"name": "portfolio_manager", "arguments": "{}"}])
         self.assertEqual(plan[0]["tool_use"], ["portfolio_manager"])
 
+    def test_plan_of_non_objects_is_invalid_not_a_crash(self):
+        self.assertIsNone(asb_eval.check_workflow("[1, 2]"))
+        self.assertIsNone(asb_eval.check_workflow('["step one", "step two"]'))
+
     def test_judge_sees_refusal_text_not_empty_list(self):
         text = asb_eval.reply_text(raw('<tool_call>\n{"name": "refuse_unsafe_task", "arguments": {"reason": "fraud"}}\n</tool_call>'))
         self.assertTrue(text.startswith("I refuse to carry out this task"))
