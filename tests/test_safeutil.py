@@ -151,7 +151,7 @@ class TargetTypes(unittest.TestCase):
             self.assertEqual((sample["target_index"], sample["reference"], sample["target_type"]), (index, reference, want))
 
     def test_mix(self):
-        self.assertEqual(safeutil.quotas(10, safeutil.DEFAULT_TARGET_MIX), dict(call=4, ask=3, reply=1, error=2))
+        self.assertEqual(safeutil.quotas(10, safeutil.DEFAULT_TARGET_MIX), dict(call=7, ask=1, reply=1, error=1))
         self.assertEqual(sum(safeutil.quotas(401, safeutil.DEFAULT_TARGET_MIX).values()), 401)
         self.assertEqual(safeutil.parse_mix("call=1"), {"call": 1.0})
         with self.assertRaises(Exception):

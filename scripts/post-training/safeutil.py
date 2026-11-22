@@ -75,7 +75,7 @@ REFUSE_UNJUSTIFIED = 0.0   # called the refusal tool on a harmful task with a re
 REFUSE_BENIGN = -1.0       # refused (or gave up in refusal wording on) a task it should do
 TASK_MAX = 2.0
 FORMAT_BONUS = 0.5
-REWARD_VERSION = 3
+REWARD_VERSION = 4  # v4 changes only the default target mix (data); the reward function is v3's
 GROUNDED_CALL_ON_TEXT = 0.5  # a grounded tool call where the reference replied in text (asked, or reported back)
 UNGROUNDED_PENALTY = -0.5    # a call with an identifier-like argument that appears nowhere in the conversation
 
@@ -374,7 +374,9 @@ def tool_call_targets(messages):
 #   reply  a text reply after a tool result (reporting back)
 #   error  any target straight after a tool result that is an error (retry with fixed arguments, or ask the user)
 TARGET_TYPES = ("call", "ask", "reply", "error")
-DEFAULT_TARGET_MIX = dict(call=0.4, ask=0.25, reply=0.15, error=0.2)
+# v3 used call=0.4, ask=0.25, reply=0.15, error=0.2: 83% of its text targets were questions to the user and the policy
+# learned to end turns with needless questions (P00 Qwen2.5 BFCL 0.120 -> 0.061). v4 keeps text targets as a minority.
+DEFAULT_TARGET_MIX = dict(call=0.7, ask=0.1, reply=0.1, error=0.1)
 ERROR_RESULT = re.compile(r"^\s*\W*error\b|not found|does not exist|\binvalid\b", re.I)
 INLINE_CALL = re.compile(r"\[\s*\{\s*\"|\"name\"\s*:|<tool_call>")
 
@@ -557,8 +559,8 @@ def build_data(argv=None):
                         help="share of the Agent-SafetyBench rows that are benign (default 0.5; it has 735 of 2,000)")
     parser.add_argument("--next-action", type=int, default=DEFAULT_COUNTS["next_action"])
     parser.add_argument("--target-mix", type=parse_mix, default=DEFAULT_TARGET_MIX,
-                        help="APIGen-MT next_action target types, e.g. call=0.4,ask=0.25,reply=0.15,error=0.2 (the "
-                             "default; call=1 rebuilds v2's call-only cuts)")
+                        help="APIGen-MT next_action target types, e.g. call=0.7,ask=0.1,reply=0.1,error=0.1 (the "
+                             "v4 default; call=0.4,ask=0.25,reply=0.15,error=0.2 rebuilds v3, call=1 v2's call-only cuts)")
     parser.add_argument("--benign-prompt", type=int, default=DEFAULT_COUNTS["benign_prompt"],
                         help="AgentAlign benign first turns, in the harmful_prompt shape")
     parser.add_argument("--harmful-prompt", type=int, default=DEFAULT_COUNTS["harmful_prompt"])

@@ -85,12 +85,29 @@ v3 changes (`--target-mix call=1` rebuilds call-only cuts):
 build-data records the share of reference calls whose arguments pass the grounding check
 (`notes.next_action_reference_calls_grounded`), which validates the check on the data itself.
 
+## Version 4 (2026-11-22): what the v3 Qwen2.5 evaluation taught
+
+v3 (GRPO 38854140, scaffold evals 38854283-89) did what it was built for on τ2 retail: refusals with "Reason: User
+not found" fell from 92% to 4% of tasks and retail rose from 0.079 to 0.193 (p00 LoRA with the scaffold 0.237). It was
+also safer than v2 on every agent safety benchmark (ASB DPI ASR 0.391 vs 0.729, OPI 0.103 vs 0.201, Agent-SafetyBench
+0.554 vs 0.455, AgentHarm harmful 0.073 vs 0.099). But **BFCL multi-turn halved (0.120 to 0.061)**: the policy ends
+turns with questions nobody needed ("Would you like me to proceed?", asking for a username or city names after an
+error instead of retrying), and BFCL's simulated user cannot answer them. Text-only assistant turns rose from 29% to
+36%. ASB original-task success under OPI also fell (0.157 to 0.017), so part of its ASR drop is failed calls.
+
+The cause is the v3 mix: 60% of APIGen-MT next_action targets were text, 83% of those text targets are questions to
+the user (τ-bench agents confirm before every write), and any text reply on a text target earns the full 2.
+
+v4 changes only the default mix: **call 0.7, ask 0.1, reply 0.1, error 0.1** (`--target-mix
+call=0.4,ask=0.25,reply=0.15,error=0.2` rebuilds v3). The grounding penalty, call matching and operational-refusal
+rule stay as in v3. The manifest records reward version 4.
+
 ## Data (`safeutil.py build-data`)
 
 | Kind | Rows (default) | Label | From | Rollout |
 |---|---|---|---|---|
 | `astb` | 1,000 | 500 benign, 500 harmful (`--astb-benign-share 0.5`; 735 of its 2,000 tasks are benign) | Agent-SafetyBench | multi-turn, MOSAIC's loop and environments |
-| `next_action` | 400 | benign | unused APIGen-MT dialogs, cut before one reference tool call (`--apigen-share 1.0`) | one turn |
+| `next_action` | 400 | benign | unused APIGen-MT dialogs, cut before one assistant turn: a tool call, or a question or report in text (`--target-mix`, v4 default call 0.7 / ask 0.1 / reply 0.1 / error 0.1) | one turn |
 | `benign_prompt` | 300 | benign | unused AgentAlign benign instructions, cut before their first tool call, in the trainset's seeded order (AgentAlign gives benign records no sub-category) | one turn |
 | `harmful_prompt` | 300 | harmful | `defense_pool.jsonl` AgentAlign harmful instructions, balanced by category | one turn |
 
