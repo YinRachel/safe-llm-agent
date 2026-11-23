@@ -45,7 +45,8 @@ async def compute_score(data_source, solution_str, ground_truth, extra_info=None
         context = safeutil.context_text(sample.get("messages"))
     result = safeutil.score(kind, fulfillable, turns, summary["well_formed"], summary["turn_lengths"],
                             task_score=task_score, reference=reference, context=context,
-                            truncated=summary["status"] in ("truncated", "turn_limit"))
+                            truncated=summary["status"] in ("truncated", "turn_limit"),
+                            reward_version=int(extra_info.get("reward_version", safeutil.REWARD_VERSION)))
     status = summary["status"]
     result.update(target=str((reference or {}).get("type", "call") if reference else ""), kind=kind, fulfillable=float(fulfillable), task_id=str(extra_info["task_id"]),
                   group_uid=str(summary["uid"]), status=status, turns=float(len(turns)),

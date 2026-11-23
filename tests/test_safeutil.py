@@ -221,6 +221,17 @@ class Reward(unittest.TestCase):
         listing = answer("Your order:\n- item one\n- item two\n- item three")
         self.assertEqual(self.score("next_action", 1, [listing], reference=dict(type="text"))["r_degen"], 0.0)
 
+    def test_reward_version_3_has_no_degenerate_penalty(self):
+        ref = dict(name="get_order", arguments={"order_id": "#W1"})
+        loop = THINK.replace("Plan the next step.", "The tool call will likely return the weather. " * 3)
+        v3 = self.score("next_action", 1, [loop + call("get_order", {"order_id": "#W1"})], reference=ref,
+                        reward_version=3)
+        self.assertEqual((v3["degenerate"], v3["r_degen"], v3["r_fmt"], v3["score"]), ("repeat", 0.0, 0.5, 2.5))
+        row = safeutil.dataset_row(0, "next_action", 1, "x", "hi", reward_version=3)
+        self.assertEqual(row["extra_info"]["reward_version"], 3)
+        self.assertEqual(safeutil.dataset_row(0, "astb", 1, "x", "hi")["extra_info"]["reward_version"],
+                         safeutil.REWARD_VERSION)
+
     def test_truncation_is_degenerate_on_single_turn_rows_only(self):
         ref = dict(name="a", arguments={})
         cut = self.score("next_action", 1, [tool("a", {})], reference=ref, truncated=True)

@@ -303,14 +303,19 @@ def task_reward(turn, reference, context=None):
 
 
 # ----------------------------------------------------------------------------- reward
+def degenerate_penalty(reward_version):
+    return DEGENERATE_PENALTY if reward_version >= 5 else 0.0
+
+
 def score(kind, fulfillable, turns, well_formed, turn_lengths, task_score=None, reference=None, context=None,
-          truncated=False):
+          truncated=False, reward_version=REWARD_VERSION):
     """Reward terms for one rollout. task_score is the judge's completion grade (astb benign), reference the target
     call or text reply (single-turn benign rows), context the conversation's context_text for next_action rows, whose
     identifiers come from the dialog. benign_prompt rows are not checked: their AgentAlign references infer values
     the instruction never states (a profile name from "Starbucks", amounts in wei), so 14% would fail. Returns floats
     only, so verl can dump them. truncated: the rollout hit the response limit; it counts as degenerate on single-turn
-    rows only, since a long multi-turn Agent-SafetyBench episode can run out of budget honestly."""
+    rows only, since a long multi-turn Agent-SafetyBench episode can run out of budget honestly. reward_version below 5
+    (v3/v4) still reports `degenerate` but applies no penalty and keeps v3's format bonus."""
     refused_at = refusal_index(turns)
     refused = refused_at is not None
     justified = refused and refusal_justified(turns[refused_at])
@@ -335,8 +340,10 @@ def score(kind, fulfillable, turns, well_formed, turn_lengths, task_score=None, 
     reasons = [r for r in (degenerate(t) for t in turns) if r]
     if truncated and kind != "astb":
         reasons.append("truncated")
-    r_degen = DEGENERATE_PENALTY if reasons else 0.0
-    r_fmt = FORMAT_BONUS if well_formed and all(well_formed) and not placeholder and not reasons else 0.0
+    penalty = degenerate_penalty(reward_version)
+    r_degen = penalty if reasons else 0.0
+    r_fmt = (FORMAT_BONUS if well_formed and all(well_formed) and not placeholder and not (reasons and penalty)
+             else 0.0)
     p_len = mosaic.length_penalty(turn_lengths)
     return dict(score=r_safety + r_task + r_fmt + r_degen - p_len, r_safety=r_safety, r_task=r_task, r_fmt=r_fmt,
                 r_degen=r_degen, degenerate=reasons[0] if reasons else "", p_len=p_len,
@@ -515,13 +522,14 @@ def split_by_label(tasks, n, benign_share):
     return benign + harmful
 
 
-def dataset_row(index, kind, fulfillable, item_id, first_user, task_json="", sample_json=""):
-    """verl RLHFDataset row; every kind has the same columns so the parquet has one schema."""
+def dataset_row(index, kind, fulfillable, item_id, first_user, task_json="", sample_json="", reward_version=REWARD_VERSION):
+    """verl RLHFDataset row; every kind has the same columns so the parquet has one schema. reward_version selects the
+    reward in safeutil_reward.py (rows without it, the parquets built before v5, get the current one)."""
     return dict(data_source=DATA_SOURCE, agent_name=mosaic.AGENT_NAME if kind == "astb" else AGENT_SINGLE,
                 prompt=[{"role": "user", "content": first_user}], ability="agent_safety_utility",
                 reward_model=dict(style="rule_and_judge", ground_truth=""),
                 extra_info=dict(index=index, kind=kind, task_id=str(item_id), fulfillable=int(fulfillable),
-                                task_json=task_json, sample_json=sample_json))
+                                task_json=task_json, sample_json=sample_json, reward_version=int(reward_version)))
 
 
 def first_user_text(messages):
@@ -591,6 +599,9 @@ def build_data(argv=None):
     parser.add_argument("--astb-benign-share", type=float, default=ASTB_BENIGN_SHARE,
                         help="share of the Agent-SafetyBench rows that are benign (default 0.5; it has 735 of 2,000)")
     parser.add_argument("--next-action", type=int, default=DEFAULT_COUNTS["next_action"])
+    parser.add_argument("--reward-version", type=int, default=REWARD_VERSION, choices=(3, 4, 5),
+                        help="reward stored in every row: 5 (default) adds r_degen; 3 and 4 are the same reward "
+                             "without it. SafeUtil v3 = --reward-version 3 --target-mix call=0.4,ask=0.25,reply=0.15,error=0.2")
     parser.add_argument("--target-mix", type=parse_mix, default=DEFAULT_TARGET_MIX,
                         help="APIGen-MT next_action target types, e.g. call=0.7,ask=0.1,reply=0.1,error=0.1 (the "
                              "v4 default; call=0.4,ask=0.25,reply=0.15,error=0.2 rebuilds v3, call=1 v2's call-only cuts)")
@@ -698,7 +709,7 @@ def build_data(argv=None):
             rows.append(("harmful_prompt", 0, sample["id"], first_user_text(sample["messages"]), "",
                          json.dumps(sample, ensure_ascii=False)))
     random.Random(f"{SEED}:rows").shuffle(rows)
-    records = [dataset_row(i, *row) for i, row in enumerate(rows)]
+    records = [dataset_row(i, *row, reward_version=args.reward_version) for i, row in enumerate(rows)]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     datasets.Dataset.from_list(records).to_parquet(str(args.output))
     kinds = Counter(r["extra_info"]["kind"] for r in records)
@@ -709,7 +720,8 @@ def build_data(argv=None):
                     tokenizer_text_calls=fmt.text_calls,
                     astb_benign_share=args.astb_benign_share, target_mix=args.target_mix,
                     system_text_sha256=hashlib.sha256(system_text.encode()).hexdigest(),
-                    reward=dict(version=REWARD_VERSION, grounded_call_on_text=GROUNDED_CALL_ON_TEXT,
+                    reward=dict(version=args.reward_version, degenerate_penalty=degenerate_penalty(args.reward_version),
+                                grounded_call_on_text=GROUNDED_CALL_ON_TEXT,
                                 ungrounded_penalty=UNGROUNDED_PENALTY, refuse_harmful=REFUSE_HARMFUL, refuse_harmful_late=REFUSE_HARMFUL_LATE,
                                 comply_harmful=COMPLY_HARMFUL, refuse_unjustified=REFUSE_UNJUSTIFIED,
                                 refuse_benign=REFUSE_BENIGN, min_think_words=MIN_THINK_WORDS, task_max=TASK_MAX, format_bonus=FORMAT_BONUS,
