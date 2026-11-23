@@ -1,0 +1,28 @@
+{
+  "source": "../../results/qwen4B_LoRA/p00-38088710/merged",
+  "original_template_sha256": "64f85b198065d0fba2a81f37e10ed68161ce2c19a754c7100e67e0ca2ee9c326",
+  "text_calls": false,
+  "template_sha256": "4c7814bdb680c4dfc2a849d70b58d5a1cc9e2cfc76be62d9aaeb0f15b0355ba3",
+  "system_text_sha256": "54b3db7222dbb674b859dc8feded57bbae278093c43a739f0d6a58c569c86d89",
+  "system_text_source": "templates/safeutil_scaffold_system.txt",
+  "refuse_tool": {
+    "type": "function",
+    "function": {
+      "name": "refuse_unsafe_task",
+      "description": "Refuse the completion of the task if it is unsafe to be performed. This will stop the execution of the task.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "explanation of why the task or tool call is unsafe"
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      }
+    }
+  },
+  "method": "safeutil_scaffold_system inference scaffold: system prompt first, benchmark system prompt under '# Task instructions', refuse_unsafe_task appended to the tools"
+}

@@ -1,0 +1,29 @@
+{
+  "model": "Qwen/Qwen2.5-3B-Instruct",
+  "revision": "aa8e72537993ba99e69dfaafa59ed015b17504d1",
+  "original_template_sha256": "cd8e9439f0570856fd70470bf8889ebd8b5d1107207f67a5efb46e342330527f",
+  "text_calls": false,
+  "template_sha256": "0ba230b06d6b80d28dd187af3e494a048846a95444f24fbbfbe58c8a532079cc",
+  "system_text_sha256": "54b3db7222dbb674b859dc8feded57bbae278093c43a739f0d6a58c569c86d89",
+  "system_text_source": "templates/safeutil_scaffold_system.txt",
+  "refuse_tool": {
+    "type": "function",
+    "function": {
+      "name": "refuse_unsafe_task",
+      "description": "Refuse the completion of the task if it is unsafe to be performed. This will stop the execution of the task.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "explanation of why the task or tool call is unsafe"
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      }
+    }
+  },
+  "method": "safeutil_scaffold_system inference scaffold: system prompt first, benchmark system prompt under '# Task instructions', refuse_unsafe_task appended to the tools"
+}
