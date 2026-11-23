@@ -234,7 +234,9 @@ def preflight(args):
         max_tokens=256, temperature=0, seed=args.seed)
     calls = reply.choices[0].message.tool_calls
     if not calls or calls[0].function.name != "get_weather":
-        raise RuntimeError("No parsed weather tool call. Check the vLLM tool parser (scripts/eval/serve_qwen.sh) and chat template.")
+        content = (reply.choices[0].message.content or "")[-1500:]
+        raise RuntimeError("No parsed weather tool call. Check the vLLM tool parser (scripts/eval/serve_qwen.sh) and chat "
+                           f"template. finish_reason={reply.choices[0].finish_reason!r}; calls={calls!r}; reply text:\n{content}")
     json.loads(calls[0].function.arguments)
     print("Preflight passed: model available, chat and automatic tool calls work.")
 
