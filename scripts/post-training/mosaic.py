@@ -564,9 +564,12 @@ def template(argv=None):
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--revision", default=DEFAULT_REVISION)
     parser.add_argument("--source", type=Path, help="local model directory whose chat template to wrap")
+    parser.add_argument("--system-text", type=Path, default=SYSTEM_TEXT,
+                        help="scaffold text that leads the system prompt (default the MOSAIC text; "
+                             "templates/safeutil_scaffold_system.txt is the SafeUtil scaffold, docs/safeutil.md)")
     args = parser.parse_args(argv)
     from safety_template import load_chat_template, sha256_text
-    system_text = load_system_text()
+    system_text = load_system_text(args.system_text)
     if args.source:
         from transformers import AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(args.source)
@@ -579,8 +582,9 @@ def template(argv=None):
     args.out.write_text(text)
     meta = dict(**origin, original_template_sha256=sha256_text(original), text_calls=text_calls,
                 template_sha256=sha256_text(text), system_text_sha256=sha256_text(system_text),
-                system_text_source=str(SYSTEM_TEXT.relative_to(PROJECT)), refuse_tool=REFUSE_TOOL,
-                method="MOSAIC inference scaffold: system prompt first, benchmark system prompt under "
+                system_text_source=str(args.system_text.resolve().relative_to(PROJECT)), refuse_tool=REFUSE_TOOL,
+                method=("MOSAIC" if args.system_text.resolve() == SYSTEM_TEXT.resolve() else
+                        args.system_text.stem) + " inference scaffold: system prompt first, benchmark system prompt under "
                        "'# Task instructions', refuse_unsafe_task appended to the tools"
                        + ("; earlier tool calls rewritten as MOSAIC <tool_call> text" if text_calls else ""))
     args.out.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")

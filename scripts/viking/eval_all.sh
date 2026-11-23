@@ -23,16 +23,23 @@ MODEL_PATH="${1:?usage: eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
 TAG="${2:?usage: eval_all.sh MODEL_PATH TAG [CHAT_TEMPLATE]}"
 CHAT_TEMPLATE="${3:-}"
 source scripts/viking/results_dir.sh
-if [[ "${SCAFFOLD:-}" == mosaic ]]; then
-    [[ -z "$CHAT_TEMPLATE" ]] || { echo "SCAFFOLD=mosaic brings its own template; drop CHAT_TEMPLATE" >&2; exit 1; }
+# SCAFFOLD=safeutil: our scaffold (templates/safeutil_scaffold_system.txt, docs/safeutil.md): the same wrapping, refusal
+#   tool and `mosaic` output parser, with a different system text. Templates templates/safeutil_scaffold[_<tag>].jinja,
+#   tag suffix -suscaffold, outputs in <eval root>/suscaffold/.
+case "${SCAFFOLD:-}" in
+    mosaic) scaffold_prefix=mosaic; scaffold_suffix=mosaic ;;
+    safeutil) scaffold_prefix=safeutil_scaffold; scaffold_suffix=suscaffold ;;
+    "") scaffold_prefix= ;;
+    *) echo "Unknown SCAFFOLD: $SCAFFOLD (mosaic, safeutil)" >&2; exit 2 ;;
+esac
+if [[ -n "$scaffold_prefix" ]]; then
+    [[ -z "$CHAT_TEMPLATE" ]] || { echo "SCAFFOLD=$SCAFFOLD brings its own template; drop CHAT_TEMPLATE" >&2; exit 1; }
     scaffold_tag="$(model_tag "$MODEL_PATH")"
-    if [[ "$scaffold_tag" == qwen2.5-3B ]]; then CHAT_TEMPLATE=templates/mosaic.jinja
-    else CHAT_TEMPLATE="templates/mosaic_$scaffold_tag.jinja"; fi
-    [[ -f "$CHAT_TEMPLATE" ]] || { echo "No MOSAIC scaffold template for $scaffold_tag: $CHAT_TEMPLATE" >&2; exit 1; }
-    TAG="$TAG-mosaic"
+    if [[ "$scaffold_tag" == qwen2.5-3B ]]; then CHAT_TEMPLATE="templates/$scaffold_prefix.jinja"
+    else CHAT_TEMPLATE="templates/${scaffold_prefix}_$scaffold_tag.jinja"; fi
+    [[ -f "$CHAT_TEMPLATE" ]] || { echo "No $SCAFFOLD scaffold template for $scaffold_tag: $CHAT_TEMPLATE" >&2; exit 1; }
+    TAG="$TAG-$scaffold_suffix"
     export TOOL_CALL_PARSER=mosaic MOSAIC_SCAFFOLD=1
-elif [[ -n "${SCAFFOLD:-}" ]]; then
-    echo "Unknown SCAFFOLD: $SCAFFOLD (mosaic)" >&2; exit 2
 fi
 [[ -f scripts/viking/agentharm.sbatch ]] || { echo "Run from the project root" >&2; exit 1; }
 check_scratch_link "$MODEL_PATH" || exit 1  # merged/ is a symlink into scratch for Viking training runs
@@ -65,7 +72,7 @@ else
     unset CHAT_TEMPLATE
 fi
 export MODEL_PATH
-if [[ "${SCAFFOLD:-}" == mosaic ]]; then export RESULTS_DIR="$(eval_root "$MODEL_PATH")/mosaic"; fi
+if [[ -n "$scaffold_prefix" ]]; then export RESULTS_DIR="$(eval_root "$MODEL_PATH")/$scaffold_suffix"; fi
 mkdir -p results logs  # sbatch opens logs/%x-%j.out before the job starts
 index=results/eval_index.tsv
 [[ -f "$index" ]] || printf 'tag\tbenchmark\tjobid\tmodel_path\tchat_template_sha256\n' > "$index"

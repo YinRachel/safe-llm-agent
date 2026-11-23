@@ -27,6 +27,8 @@ class EvalAllTests(unittest.TestCase):
         shutil.copytree(ROOT / "scripts", work / "scripts")
         (work / "templates").mkdir()
         (work / "templates/ptst.jinja").write_text("T")
+        (work / "templates/safeutil_scaffold_qwen4B.jinja").write_text("S")  # the fixture model is a qwen4B run
+        shutil.copy(ROOT / "templates/mosaic_qwen4B.jinja", work / "templates/mosaic_qwen4B.jinja")
         for name in ("glm4_tools.jinja", "llama31_tools.jinja", "mosaic.jinja"):
             shutil.copy(ROOT / "templates" / name, work / "templates" / name)
         model = work / "results/qwen4B_LoRA/p10-1/merged"
@@ -76,14 +78,30 @@ class EvalAllTests(unittest.TestCase):
         run = (work / "results/qwen4B_LoRA/p10-1").resolve()
         for call in calls:
             self.assertIn("--job-name=eval-p10-mosaic-", call)
-            self.assertIn(f"CHAT_TEMPLATE={work.resolve() / 'templates/mosaic.jinja'}", call)
+            self.assertIn(f"CHAT_TEMPLATE={work.resolve() / 'templates/mosaic_qwen4B.jinja'}", call)
             self.assertIn("TOOL_CALL_PARSER=mosaic", call)
             self.assertIn("MOSAIC_SCAFFOLD=1", call)
             self.assertIn(f"RESULTS_DIR={run}/eval/mosaic", call)
         self.assertIn("--chat-template", calls[6])
         self.assertTrue(all(row.split("\t")[0] == "p10-mosaic" for row in index[1:]))
-        sha = hashlib.sha256((ROOT / "templates/mosaic.jinja").read_bytes()).hexdigest()
+        sha = hashlib.sha256((ROOT / "templates/mosaic_qwen4B.jinja").read_bytes()).hexdigest()
         self.assertEqual(index[1].split("\t")[4], sha)
+
+    def test_safeutil_scaffold(self):
+        work, calls, index = self.run_script("results/qwen4B_LoRA/p10-1/merged", "p10", extra_env={"SCAFFOLD": "safeutil"})
+        self.assertEqual(len(calls), 7)
+        run = (work / "results/qwen4B_LoRA/p10-1").resolve()
+        for call in calls:
+            self.assertIn("--job-name=eval-p10-suscaffold-", call)
+            self.assertIn(f"CHAT_TEMPLATE={work.resolve() / 'templates/safeutil_scaffold_qwen4B.jinja'}", call)
+            self.assertIn("TOOL_CALL_PARSER=mosaic", call)
+            self.assertIn("MOSAIC_SCAFFOLD=1", call)
+            self.assertIn(f"RESULTS_DIR={run}/eval/suscaffold", call)
+        self.assertEqual(index[1].split("\t")[4], hashlib.sha256(b"S").hexdigest())
+
+    def test_unknown_scaffold(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_script("results/qwen4B_LoRA/p10-1/merged", "p10", extra_env={"SCAFFOLD": "other"})
 
     def test_mosaic_scaffold_refuses_a_second_template(self):
         with self.assertRaises(subprocess.CalledProcessError):
