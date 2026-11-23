@@ -102,6 +102,37 @@ v4 changes only the default mix: **call 0.7, ask 0.1, reply 0.1, error 0.1** (`-
 call=0.4,ask=0.25,reply=0.15,error=0.2` rebuilds v3). The grounding penalty, call matching and operational-refusal
 rule stay as in v3. The manifest records reward version 4.
 
+## Version 5 (2026-11-23): what the v4 preflight failure taught
+
+v4 (GRPO 38858749) trained without trouble and its temperature-1 rollouts looked clean, but six of its seven scaffold
+evaluations (38873450-55) stopped at `evaluate.py preflight`: asked to "Use get_weather to look up the weather in
+London" at temperature 0, it repeated "The tool call will likely return the current temperature in London..." until
+max_tokens. Every benchmark decodes at temperature 0. A greedy probe (16 simple tool requests rendered with the
+scaffold, as the benchmarks do, plus 77 held-out next_action call targets rendered as in training; 512 tokens) shows it is
+v4-specific:
+
+| greedy decoding | p00 LoRA | v2 | v3 | v4 |
+|---|---|---|---|---|
+| simple requests: hit max_tokens | 0% | 3% | 7% | 13% |
+| next_action call targets: called | 66% | 60% | 82% | 51% |
+| next_action call targets: hit max_tokens | 0% | 3% | 4% | 14% |
+
+At temperature 1 v4 hits max_tokens on 0% / 9% of the same prompts, and its training entropy fell from 0.65 to about
+0.40 (v3 stayed near 0.7). Sampling at temperature 1 almost never produced the loop (1-2% of late rollouts had a
+repeated sentence), so the reward never saw it.
+
+v5 keeps v4's data and reward and adds:
+
+- **r_degen = -1** (and no r_fmt) when a turn repeats a sentence of 20+ characters 3 times, leaves a `<think>`,
+  `<safety_thoughts>`, `<tool_call>` or `<answer>` tag unclosed, or writes a chat-role tag (`</system>`,
+  `<tool_response>`...), or when a single-turn row is cut off at the response limit (`safeutil.degenerate`). On v3/v4
+  rollouts this fires on about 10% of early Agent-SafetyBench rollouts, 1-4% of late ones, and under 1% of single-turn rows.
+- **Rollout temperature 0.8** (verl override `actor_rollout_ref.rollout.temperature=0.8`; MOSAIC App. J uses 1.0), so
+  sampled turns sit closer to greedy decoding and the penalty sees the loops.
+- **Checkpoints at steps 400 and 500 kept** (`KEEP_CKPT=1 trainer.save_freq=100 trainer.max_actor_ckpt_to_keep=2`;
+  two 37 GB checkpoints fit in the scratch quota, three do not). Acceptance before the benchmarks: the greedy probe
+  and the preflight on `merged/` (step 500); export step 400 with `export_checkpoint.sbatch` if step 500 fails.
+
 ## Data (`safeutil.py build-data`)
 
 | Kind | Rows (default) | Label | From | Rollout |

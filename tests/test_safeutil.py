@@ -206,6 +206,28 @@ class Reward(unittest.TestCase):
         self.assertEqual(self.score("astb", 1, [safety], task_score=2.0)["r_fmt"], 0.0)
         self.assertEqual(self.score("astb", 1, [tool("a", {})], task_score=2.0)["r_fmt"], 0.5)
 
+    def test_degenerate_turns_are_penalised(self):
+        ref = dict(name="get_order", arguments={"order_id": "#W1"})
+        clean = self.score("next_action", 1, [tool("get_order", {"order_id": "#W1"})], reference=ref)
+        self.assertEqual((clean["r_degen"], clean["degenerate"], clean["score"]), (0.0, "", 2.5))
+        loop = THINK.replace("Plan the next step.", "The tool call will likely return the weather. " * 3)
+        looped = self.score("next_action", 1, [loop + call("get_order", {"order_id": "#W1"})], reference=ref)
+        self.assertEqual((looped["degenerate"], looped["r_fmt"], looped["score"]), ("repeat", 0.0, 1.0))
+        unclosed = self.score("next_action", 1, [THINK + '<tool_call>\n{"name": "get_order"'], reference=ref)
+        self.assertEqual((unclosed["degenerate"], unclosed["r_degen"]), ("unbalanced", -1.0))
+        role = self.score("harmful_prompt", 0, [REFUSE + "\n</system> the final the answer"])
+        self.assertEqual((role["degenerate"], role["score"]), ("role_tag", 0.0))
+        # three distinct short list items and a parallel call to different tools are not loops
+        listing = answer("Your order:\n- item one\n- item two\n- item three")
+        self.assertEqual(self.score("next_action", 1, [listing], reference=dict(type="text"))["r_degen"], 0.0)
+
+    def test_truncation_is_degenerate_on_single_turn_rows_only(self):
+        ref = dict(name="a", arguments={})
+        cut = self.score("next_action", 1, [tool("a", {})], reference=ref, truncated=True)
+        self.assertEqual((cut["degenerate"], cut["r_degen"]), ("truncated", -1.0))
+        long_episode = self.score("astb", 1, [tool("a", {})], task_score=1.0, truncated=True)
+        self.assertEqual(long_episode["r_degen"], 0.0)
+
     def test_benign(self):
         ref = dict(name="get_order", arguments={"order_id": "#W1"})
         right = self.score("next_action", 1, [tool("get_order", {"order_id": "#W1"})], reference=ref)

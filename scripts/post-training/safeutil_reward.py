@@ -1,4 +1,4 @@
-"""verl custom reward for SafeUtil: R = r_safety + r_task + r_fmt - p_len, by row kind (safeutil.py has the table).
+"""verl custom reward for SafeUtil: R = r_safety + r_task + r_fmt + r_degen - p_len, by row kind (safeutil.py has the table).
 
 custom_reward_function.path=scripts/post-training/safeutil_reward.py, custom_reward_function.name=compute_score.
 Both loops put their summary in extra_info["mosaic"] (verl needs the same extra_fields keys from every agent-loop
@@ -44,7 +44,8 @@ async def compute_score(data_source, solution_str, ground_truth, extra_info=None
         reference = sample.get("reference")
         context = safeutil.context_text(sample.get("messages"))
     result = safeutil.score(kind, fulfillable, turns, summary["well_formed"], summary["turn_lengths"],
-                            task_score=task_score, reference=reference, context=context)
+                            task_score=task_score, reference=reference, context=context,
+                            truncated=summary["status"] in ("truncated", "turn_limit"))
     status = summary["status"]
     result.update(target=str((reference or {}).get("type", "call") if reference else ""), kind=kind, fulfillable=float(fulfillable), task_id=str(extra_info["task_id"]),
                   group_uid=str(summary["uid"]), status=status, turns=float(len(turns)),

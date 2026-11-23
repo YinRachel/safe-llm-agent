@@ -26,9 +26,9 @@ import sys
 LABELS = {1.0: "benign", 0.0: "harmful"}
 # Reward terms in the order they are reported; a run logs MOSAIC's (r_align) or SafeUtil's (r_safety, r_task) and the
 # report keeps the ones present.
-ALL_TERMS = ("score", "r_align", "r_safety", "r_task", "r_fmt", "p_len")
+ALL_TERMS = ("score", "r_align", "r_safety", "r_task", "r_fmt", "r_degen", "p_len")
 TERMS = ALL_TERMS
-SHORT = dict(score="score", r_align="align", r_safety="safety", r_task="task", r_fmt="fmt", p_len="len")
+SHORT = dict(score="score", r_align="align", r_safety="safety", r_task="task", r_fmt="fmt", r_degen="degen", p_len="len")
 REQUIRED = ("score", "r_fmt", "p_len", "refused", "fulfillable", "group_uid")
 
 
