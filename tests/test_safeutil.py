@@ -144,18 +144,61 @@ class TargetTypes(unittest.TestCase):
                          [None, None, "ask", None, "call", None, "error", None, "reply", None, None])
 
     def test_samples_per_type(self):
-        for want, index, reference in (("ask", 2, dict(type="text", text="Could you give me your email?")),
+        for want, index, reference in (("ask", 2, dict(type="text", text="Could you give me your email?", act="ask_info")),
                                        ("error", 6, dict(type="call", name="find", arguments={"email": "y@r.com"})),
-                                       ("reply", 8, dict(type="text", text="Found you. Which keyboard would you like?"))):
+                                       ("reply", 8, dict(type="text", text="Found you. Which keyboard would you like?",
+                                                         act="ask_info"))):
             sample = safeutil.next_action_sample(dialog(), SYSTEM, random.Random(0), lambda m, t: True, want=want)
             self.assertEqual((sample["target_index"], sample["reference"], sample["target_type"]), (index, reference, want))
 
+    def test_act_filter(self):
+        sample = safeutil.next_action_sample(dialog(), SYSTEM, random.Random(0), lambda m, t: True, want="error",
+                                             act="call")
+        self.assertEqual((sample["target_index"], sample["target_act"]), (6, "call"))
+        self.assertIsNone(safeutil.next_action_sample(dialog(), SYSTEM, random.Random(0), lambda m, t: True,
+                                                      want="error", act="ask_info"))
+        self.assertIsNone(safeutil.next_action_sample(dialog(), SYSTEM, random.Random(0), lambda m, t: True,
+                                                      want="reply", act="report"))
+
+    def test_act_mix(self):
+        mix = safeutil.parse_act_mix("error:call=0.5,ask_info=0.5;reply:report=1")
+        self.assertEqual(mix, {"error": {"call": 0.5, "ask_info": 0.5}, "reply": {"report": 1.0}})
+        self.assertEqual(safeutil.parse_act_mix("none"), {})
+        self.assertEqual(safeutil.split_quota(80, safeutil.DEFAULT_ACT_MIX["error"]), dict(call=40, ask_info=28, confirm=12))
+        with self.assertRaises(Exception):
+            safeutil.parse_act_mix("error:call=0.5")
+
     def test_mix(self):
-        self.assertEqual(safeutil.quotas(10, safeutil.DEFAULT_TARGET_MIX), dict(call=7, ask=1, reply=1, error=1))
+        self.assertEqual(safeutil.quotas(10, safeutil.DEFAULT_TARGET_MIX), dict(call=4, ask=3, reply=1, error=2))
         self.assertEqual(sum(safeutil.quotas(401, safeutil.DEFAULT_TARGET_MIX).values()), 401)
         self.assertEqual(safeutil.parse_mix("call=1"), {"call": 1.0})
         with self.assertRaises(Exception):
             safeutil.parse_mix("call=0.5,ask=0.2")
+
+
+class TextActs(unittest.TestCase):
+    def test_text_act(self):
+        act = safeutil.text_act
+        self.assertEqual(act("Your order #W1 is pending. Is there anything else I can help you with?"), "report")
+        self.assertEqual(act("Sure, I can help you with that. Could you please provide your email?"), "ask_info")
+        self.assertEqual(act("The refund is $20. Would you like me to proceed with the return? (yes/no)"), "confirm")
+        self.assertEqual(act("Do you want me to cancel reservation ABC123?"), "confirm")
+        self.assertEqual(act("Done.\nWhich keyboard would you like?"), "ask_info")
+
+    def test_text_reward_by_act(self):
+        report = dict(type="text", text="Your order is on its way.")
+        ask = dict(type="text", text="Could you give me your email?", act="ask_info")
+        confirm = dict(type="text", text="Shall I cancel it?")
+        reward = lambda text, ref, v=6: safeutil.task_reward(turn(answer(text)), ref, "", v)[0]
+        self.assertEqual(reward("It shipped yesterday. Anything else I can help with?", report), 2.0)
+        self.assertEqual(reward("It shipped. Would you like me to proceed with anything?", report), 0.0)
+        self.assertEqual(reward("What is your order id?", report), 0.0)
+        self.assertEqual(reward("It shipped. Would you like me to proceed with anything?", report, 3), 2.0)  # v3
+        self.assertEqual(reward("What is your email?", ask), 2.0)
+        self.assertEqual(reward("Should I go ahead with the lookup?", ask), 1.0)
+        self.assertEqual(reward("I looked you up.", ask), 0.5)
+        self.assertEqual(reward("Do you want me to cancel order #W1?", confirm), 2.0)
+        self.assertEqual(safeutil.task_reward(turn(tool("find", {"zip": "1"})), report, None, 6)[0], 0.5)
 
 
 class Reward(unittest.TestCase):
@@ -207,7 +250,9 @@ class Reward(unittest.TestCase):
         self.assertEqual(self.score("astb", 1, [tool("a", {})], task_score=2.0)["r_fmt"], 0.5)
 
     def test_degenerate_turns_are_penalised(self):
+        """Reward version 5 only (v6 builds on v3 without the penalty)."""
         ref = dict(name="get_order", arguments={"order_id": "#W1"})
+        score, self.score = self.score, lambda *a, **kw: score(*a, reward_version=5, **kw)
         clean = self.score("next_action", 1, [tool("get_order", {"order_id": "#W1"})], reference=ref)
         self.assertEqual((clean["r_degen"], clean["degenerate"], clean["score"]), (0.0, "", 2.5))
         loop = THINK.replace("Plan the next step.", "The tool call will likely return the weather. " * 3)
@@ -234,6 +279,7 @@ class Reward(unittest.TestCase):
 
     def test_truncation_is_degenerate_on_single_turn_rows_only(self):
         ref = dict(name="a", arguments={})
+        score, self.score = self.score, lambda *a, **kw: score(*a, reward_version=5, **kw)
         cut = self.score("next_action", 1, [tool("a", {})], reference=ref, truncated=True)
         self.assertEqual((cut["degenerate"], cut["r_degen"]), ("truncated", -1.0))
         long_episode = self.score("astb", 1, [tool("a", {})], task_score=1.0, truncated=True)
