@@ -133,6 +133,21 @@ v5 keeps v4's data and reward and adds:
   two 37 GB checkpoints fit in the scratch quota, three do not). Acceptance before the benchmarks: the greedy probe
   and the preflight on `merged/` (step 500); export step 400 with `export_checkpoint.sbatch` if step 500 fails.
 
+**Outcome: v5 failed acceptance and is dropped; v3 stays the reported SafeUtil version.** Full run 38889184 (500 steps,
+3 h 52 min) trained normally (late rollouts: harmful_prompt refused 97%, benign_prompt 11%, next_action r_task 1.56).
+The greedy probe fixed the simple requests but not the next_action turns:
+
+| greedy decoding | v3 | v4 | v5 step 400 | v5 step 500 |
+|---|---|---|---|---|
+| simple requests: called / hit max_tokens | .43 / .07 | .60 / .13 | .70 / .00 | .70 / .03 |
+| next_action call targets: called / hit max_tokens | .82 / .04 | .51 / .14 | .45 / .13 | .49 / .12 |
+
+The loops ("get the get the ...", recited policy text, JSON garbled mid-call) were already there at step 400. At
+temperature 0.8 v5 hit max_tokens on only 3% of next_action prompts, so the penalty still rarely saw them. What
+v3 and v4/v5 differ in is the target mix: v3's text-heavy mix (call 0.4) kept training entropy near 0.7 and greedy
+decoding stable. A probe caveat: its call regex takes the first `<tool_call>` block, so a turn whose valid call follows a
+malformed block counts as no call. That turn is degenerate either way, and every model is scored the same.
+
 ## Data (`safeutil.py build-data`)
 
 | Kind | Rows (default) | Label | From | Rollout |
