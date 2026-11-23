@@ -148,6 +148,21 @@ v3 and v4/v5 differ in is the target mix: v3's text-heavy mix (call 0.4) kept tr
 decoding stable. A probe caveat: its call regex takes the first `<tool_call>` block, so a turn whose valid call follows a
 malformed block counts as no call. That turn is degenerate either way, and every model is scored the same.
 
+### SafeUtil v3 on the other models (2026-11-23)
+
+Rows carry `extra_info.reward_version` (`build-data --reward-version`, default 5); 3 and 4 select the v3 reward with
+no r_degen, so v3 runs from current code. The Qwen3-4B and Llama-3.1-8B v3 parquets (`trainset/derived/<tag>/`,
+v2 kept as `safeutil_train.v2.parquet`) were built with
+
+    safeutil.py build-data --tokenizer <p00 merged> --output trainset/derived/<tag>/safeutil_train.parquet \
+        --reward-version 3 --target-mix call=0.4,ask=0.25,reply=0.15,error=0.2
+
+giving the Qwen2.5 v3 split (next_action call 160, ask 100, reply 60, error 80; Qwen3-4B all 2,000 task ids shared
+with Qwen2.5 v3, Llama 1,995). Runs use each model's v2 settings (2 H100 gpuplus, 360G; ROLLOUT_MEM 0.5 for Qwen3-4B,
+0.4 plus ACTOR_PARAM_OFFLOAD=1 for Llama; rollout temperature 1.0): Qwen3-4B 38974135 -> 38974136, then Llama
+38974138 -> 38974139 (chained so two full-fine-tuning checkpoints are never in scratch at once). GLM-4-9B waits on the
+GRPO collapse investigation.
+
 ## Data (`safeutil.py build-data`)
 
 | Kind | Rows (default) | Label | From | Rollout |
