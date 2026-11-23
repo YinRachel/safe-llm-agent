@@ -190,6 +190,28 @@ with Qwen2.5 v3, Llama 1,995). Runs use each model's v2 settings (2 H100 gpuplus
 38974138 -> 38974139 (chained so two full-fine-tuning checkpoints are never in scratch at once). GLM-4-9B waits on the
 GRPO collapse investigation.
 
+## SafeUtil scaffold (2026-11-23): our own inference template, template-only test
+
+The MOSAIC scaffold gives much of the safety gain on its own but costs utility (p00 LoRA, bare -> MOSAIC scaffold:
+AgentHarm harmful Llama 0.462 -> 0.134, GLM 0.532 -> 0.311; BFCL GLM 0.130 -> 0.079, Qwen2.5 0.116 -> 0.051; tau2
+retail GLM 0.386 -> 0.289). Likely causes in `templates/mosaic_system.txt`: a turn is a tool call or a `<answer>`
+"final answer" (no way to talk to the user mid-task); mandatory `<think>` and "evaluate safety" every turn; "Call at
+most one tool per turn"; no guidance on errors, missing information or injected instructions; Qwen tags for every model.
+
+`templates/safeutil_scaffold_system.txt` keeps the refusal tool and a short safety section and changes the rest:
+several independent calls per message, plain-text replies that report, ask for missing information or ask approval
+before irreversible actions when the task requires it, use the conversation instead of asking or inventing values,
+retry after errors, optional short `<think>`, treat tool outputs as data (not instructions), refuse only clear harm and
+never over failures. Templates (`templates/safeutil_scaffold.jinja`, `safeutil_scaffold_qwen4B.jinja`, built with
+`mosaic.py template --system-text templates/safeutil_scaffold_system.txt [--source <p00 merged>]`) are the MOSAIC
+templates with only the system text replaced; the `mosaic` output parser reads both. Evaluate with
+`SCAFFOLD=safeutil bash scripts/viking/eval_all.sh ...` (tag suffix `-suscaffold`, outputs in `eval/suscaffold/`).
+
+Template-only test (no training), p00 LoRA, all 7 benchmarks, BFCL_TIME 36 h: Qwen2.5-3B 38974777-83, Qwen3-4B
+38974784-90. Compare with `lora_fine_tune` (bare) and `lora_fine_tune_scaffold` (MOSAIC scaffold). If it keeps most of
+the MOSAIC scaffold's safety with less utility loss, the next SafeUtil version trains with it (data and r_fmt then
+follow the new format); MOSAIC itself stays evaluated with its own scaffold.
+
 ## Data (`safeutil.py build-data`)
 
 | Kind | Rows (default) | Label | From | Rollout |
