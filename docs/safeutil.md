@@ -148,6 +148,33 @@ v3 and v4/v5 differ in is the target mix: v3's text-heavy mix (call 0.4) kept tr
 decoding stable. A probe caveat: its call regex takes the first `<tool_call>` block, so a turn whose valid call follows a
 malformed block counts as no call. That turn is degenerate either way, and every model is scored the same.
 
+## Version 6 (2026-11-23): fixing v3's text targets
+
+v3 is the best version (v4/v5 looped under greedy decoding), and its remaining weakness is BFCL (0.061 vs v2 0.120):
+needless questions. Two causes, both measured on the v3 data and rollouts:
+
+- **Reward:** any text reply on a text target earned 2, whatever it did.
+- **Data:** 199 of v3's 225 text targets were themselves questions: 55 of 65 after-error text targets asked the user
+  (only 15 of v3's 80 error targets were retries), and 44 of 60 reply targets asked for details or confirmation. The
+  eligible APIGen-MT pool has 222 retry calls after errors and 5,009 plain reports after tool results, so this was
+  sampling, not scarcity. v3's own late rollouts already matched the reference's act most of the time (a question
+  where the reference reported: 13 of 688), so a reward change alone would change little.
+
+v6 keeps v3's target mix (call 0.4, ask 0.25, reply 0.15, error 0.2), its grounding penalty and refusal rules, and no
+r_degen. It changes:
+
+- **Text replies score by act** (`text_act`: report, ask_info, confirm; a closing "anything else?" is not a
+  question): matching the reference 2, the other kind of question 1, reporting where the reference asked 0.5, a
+  question where the reference reported 0 (`TEXT_ACT_REWARD`). A grounded call on a text target stays 0.5.
+- **Act sub-mix** (`--act-mix`, APIGen-MT only): error targets call 0.5 / ask_info 0.35 / confirm 0.15, reply targets
+  report 0.6 / ask_info 0.2 / confirm 0.2; ask targets keep the pool's acts.
+
+Qwen2.5 v6 parquet (2026-11-23, v4's kept as `safeutil_train.v4.parquet`): next_action call 160; error 40 retry calls /
+28 ask_info / 12 confirm; reply 36 report / 12 ask_info / 12 confirm; ask 85 ask_info / 6 confirm / 9 report.
+Reference calls grounded 0.995. GRPO smoke 38974668 -> full 38974669 (v3 settings: 1 H100 gpuplus, 160G, temperature
+1.0). Acceptance as for v5: greedy probe (next_action call rate and max_tokens hits at least as good as v3's .82 / .04)
+and the preflight before the benchmarks; the target is BFCL back towards v2 with v3's safety.
+
 ### SafeUtil v3 on the other models (2026-11-23)
 
 Rows carry `extra_info.reward_version` (`build-data --reward-version`, default 5); 3 and 4 select the v3 reward with
