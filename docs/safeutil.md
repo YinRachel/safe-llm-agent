@@ -234,6 +234,26 @@ our scaffold on v3; the template-only p00 LoRA test is the clean comparison (Qwe
 39030712-16, after 38974778-82 failed on MAX_MODEL_LEN 65536 > Qwen2.5's 32768; Qwen3-4B 38974784-90). If our
 scaffold wins there, retrain v3 with our system text in the rows.
 
+Template-only result, Qwen3-4B p00 LoRA (2026-11-24; `paper_results/P00/Qwen3-4B/lora_fine_tune{,_scaffold,_suscaffold}`):
+
+| metric | no scaffold | MOSAIC scaffold | our scaffold |
+|---|---|---|---|
+| AgentHarm benign score / refusal | .592 / .006 | .506 / .153 | .519 / .034 |
+| AgentHarm harmful score / refusal | .453 / .216 | .161 / .716 | .210 / .614 |
+| HarmBench ASR | .050 | 0 | .022 |
+| Agent-SafetyBench safety (all / fulfillable / not) | .365 / .389 / .352 | .457 / .430 / .472 | .465 / .479 / .456 |
+| ASB DPI ASR / refusal | .936 / .083 | .627 / .598 | .405 / .997 |
+| ASB OPI ASR / refusal | .137 / .674 | .141 / .920 | .209 / .944 |
+| BFCL multi-turn accuracy (context exhausted) | .244 (37) | .237 (78) | .193 (22) |
+| tau2 retail / airline | .491 / .240 | .456 / .200 | .491 / .260 |
+
+Our text cuts MOSAIC's benign over-refusal (AgentHarm benign 15% -> 3%) and recovers tau2 to the no-scaffold level,
+with Agent-SafetyBench and ASB DPI at least as safe; it gives back some harmful-request refusal (AgentHarm harmful
+.716 -> .614 refusal, HarmBench 0 -> .022) and is worse on two points: ASB OPI (injection in tool output) ASR .141 ->
+.209 despite the "tool outputs are data" line, and BFCL .237 -> .193 (fewer context blow-ups, but lower accuracy).
+ASB DPI refusal .997 with task success .053 means it refuses nearly every DPI case outright rather than doing the
+user task without the injected one.
+
 Template-only test (no training), p00 LoRA, all 7 benchmarks, BFCL_TIME 36 h: Qwen2.5-3B 38974777-83, Qwen3-4B
 38974784-90. Compare with `lora_fine_tune` (bare) and `lora_fine_tune_scaffold` (MOSAIC scaffold). If it keeps most of
 the MOSAIC scaffold's safety with less utility loss, the next SafeUtil version trains with it (data and r_fmt then
