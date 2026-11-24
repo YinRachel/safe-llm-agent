@@ -1,0 +1,28 @@
+{
+  "source": "results/llama3.1-8B_LoRA/p00-38488844/merged",
+  "original_template_sha256": "3d9b05d94132fe25006611af85376a1dd270a107de5302c58a15e375441068c1",
+  "text_calls": true,
+  "template_sha256": "05f606c3df189815a5e64ea48595474ed1dc49df953fc0396f5420b819cd18ef",
+  "system_text_sha256": "54b3db7222dbb674b859dc8feded57bbae278093c43a739f0d6a58c569c86d89",
+  "system_text_source": "templates/safeutil_scaffold_system.txt",
+  "refuse_tool": {
+    "type": "function",
+    "function": {
+      "name": "refuse_unsafe_task",
+      "description": "Refuse the completion of the task if it is unsafe to be performed. This will stop the execution of the task.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "explanation of why the task or tool call is unsafe"
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      }
+    }
+  },
+  "method": "safeutil_scaffold_system inference scaffold: system prompt first, benchmark system prompt under '# Task instructions', refuse_unsafe_task appended to the tools; earlier tool calls rewritten as MOSAIC <tool_call> text"
+}
