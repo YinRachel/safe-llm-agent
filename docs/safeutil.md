@@ -190,6 +190,24 @@ with Qwen2.5 v3, Llama 1,995). Runs use each model's v2 settings (2 H100 gpuplus
 38974138 -> 38974139 (chained so two full-fine-tuning checkpoints are never in scratch at once). GLM-4-9B waits on the
 GRPO collapse investigation.
 
+Outcome (2026-11-24): both finished (Qwen3-4B 3 h 41 min, Llama 6 h 35 min). Llama's rollouts showed benign
+over-refusal rising to 24% around steps 301-400 and back to 5% by the end; harmful_prompt refusal about 94%. Greedy probe
+(`greedy_probe.py --template templates/mosaic_<tag>.jinja --data trainset/derived/<tag>/safeutil_train.parquet`, jobs
+39018295/306; calls read with `tool_parsers.mosaic_calls`; next_action rows are the model's own v3 parquet, 44 call
+targets of 120), greedy call rate:
+
+| model | simple requests | next_action call | next_action calls on text targets (reply/ask/error) | max_tokens hit |
+|---|---|---|---|---|
+| Qwen3-4B p00 LoRA | 1.00 | .86 | .13/.11/.19 | .05 |
+| Qwen3-4B SafeUtil v3 | 1.00 | .93 | .04/.07/.15 | .02 |
+| Llama p00 LoRA | 1.00 | .73 | .17/.15/.19 | .05 |
+| Llama SafeUtil v3 | 1.00 | .82 | .26/.07/.19 | 0 |
+| Qwen2.5 SafeUtil v3 (same parser) | .47 | .84 | .13/.07/0 | 0 |
+
+No loops; both are at or above their starting point, so they went to MOSAIC-scaffold evaluation: Qwen3-4B
+39029088-94, Llama 39029095-101. Llama writes untagged JSON calls (0 of 79 tagged), which `mosaic_calls` reads as
+the scaffold evals do.
+
 ## SafeUtil scaffold (2026-11-23): our own inference template, template-only test
 
 The MOSAIC scaffold gives much of the safety gain on its own but costs utility (p00 LoRA, bare -> MOSAIC scaffold:
