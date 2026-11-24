@@ -225,6 +225,15 @@ never over failures. Templates (`templates/safeutil_scaffold.jinja`, `safeutil_s
 templates with only the system text replaced; the `mosaic` output parser reads both. Evaluate with
 `SCAFFOLD=safeutil bash scripts/viking/eval_all.sh ...` (tag suffix `-suscaffold`, outputs in `eval/suscaffold/`).
 
+v3 under our scaffold (2026-11-24). v6 failed the greedy gate (next_action call .75 vs v3 .84 on the same rows, job
+39030717; it retries after errors, .62 on error targets vs v3 0, and hits max_tokens less, .05 vs .13), so it is
+parked and v3 stays the method. The three v3 models are evaluated under `SCAFFOLD=safeutil` (Llama template
+`templates/safeutil_scaffold_llama3.1-8B.jinja`, c700d7f): Qwen2.5 39031069-75 (MAX_MODEL_LEN=32768), Qwen3-4B
+39031076-82, Llama 39031083-89. v3 was trained with the MOSAIC system text in its rows, so this is a lower bound for
+our scaffold on v3; the template-only p00 LoRA test is the clean comparison (Qwen2.5 38974777/83 plus reruns
+39030712-16, after 38974778-82 failed on MAX_MODEL_LEN 65536 > Qwen2.5's 32768; Qwen3-4B 38974784-90). If our
+scaffold wins there, retrain v3 with our system text in the rows.
+
 Template-only test (no training), p00 LoRA, all 7 benchmarks, BFCL_TIME 36 h: Qwen2.5-3B 38974777-83, Qwen3-4B
 38974784-90. Compare with `lora_fine_tune` (bare) and `lora_fine_tune_scaffold` (MOSAIC scaffold). If it keeps most of
 the MOSAIC scaffold's safety with less utility loss, the next SafeUtil version trains with it (data and r_fmt then
