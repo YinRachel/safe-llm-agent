@@ -1,11 +1,23 @@
 """Greedy-decoding probe for GRPO checkpoints: does the model call tools at temperature 0, or narrate and loop?
 Run from the project root with the serving env (vLLM) on a GPU node; docs/safeutil.md (Version 5) has the v2-v4 numbers.
-usage: greedy_probe.py OUT.json TAG=MODEL_DIR   (one model per process)"""
-import collections, json, re, sys, random
+usage: greedy_probe.py [--template T.jinja] [--data TRAIN.parquet] OUT.json TAG=MODEL_DIR   (one model per process)
+--template: scaffold template for the simple requests (default templates/mosaic.jinja, Qwen2.5-3B; mosaic_<tag>.jinja for others)
+--data: SafeUtil training parquet whose next_action rows are probed (default trainset/derived/safeutil_train.parquet)
+Calls are read with tool_parsers.mosaic_calls, as the scaffold evals read them (tagged blocks, or one untagged JSON call)."""
+import argparse, collections, json, os, re, sys, random
 import pandas as pd
 from vllm import LLM, SamplingParams
 
-TEMPLATE = open("templates/mosaic.jinja").read()
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tool_parsers import mosaic_calls
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--template", default="templates/mosaic.jinja")
+ap.add_argument("--data", default="trainset/derived/safeutil_train.parquet")
+ap.add_argument("out")
+ap.add_argument("specs", nargs="+")
+args = ap.parse_args()
+TEMPLATE = open(args.template).read()
 WEATHER = {"type": "function", "function": {"name": "get_weather", "description": "Get the current weather for a city.",
            "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}
 STOCK = {"type": "function", "function": {"name": "get_stock_price", "description": "Get the latest price of a stock.",
@@ -35,22 +47,14 @@ for who in ["alice@example.com", "bob@example.com", "carol@example.com"]:
     simple.append(([{"role": "user", "content": f"Email {who} with subject 'Meeting' saying the meeting moved to 3pm."}], [EMAIL, SEARCH]))
     simple.append(([{"role": "system", "content": "You are a helpful customer support agent."}, {"role": "user", "content": f"Please email {who} that their refund was processed."}], [EMAIL, ORDER]))
 
-d = pd.read_parquet("trainset/derived/safeutil_train.parquet")
+d = pd.read_parquet(args.data)
 rows = [json.loads(e["sample_json"]) for e in d.extra_info if e["kind"] == "next_action"]
 random.Random(0).shuffle(rows)
 na = [(r["messages"], r["tools"], r["target_type"]) for r in rows[:120]]
 cases = [("simple", m, t, "call") for m, t in simple] + [("next_action", m, t, tt) for m, t, tt in na]
 
-CALL = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
-
-
 def classify(text, finish):
-    calls = []
-    for c in CALL.findall(text):
-        try:
-            calls.append(json.loads(c))
-        except json.JSONDecodeError:
-            pass
+    calls = mosaic_calls(text)[1]
     sents = [s.strip() for s in re.split(r"[.\n]", text) if len(s.strip()) > 20]
     rep = max(collections.Counter(sents).values() or [0])
     pre = text.find("<tool_call>")
@@ -59,7 +63,7 @@ def classify(text, finish):
 
 
 out = {}
-for spec in sys.argv[2:]:
+for spec in args.specs:
     tag, path = spec.split("=", 1)
     llm = LLM(path, max_model_len=16384, seed=42, gpu_memory_utilization=0.85)
     tok = llm.get_tokenizer()
@@ -90,4 +94,4 @@ for spec in sys.argv[2:]:
     del llm
     import gc, torch
     gc.collect(); torch.cuda.empty_cache()
-    json.dump(out, open(sys.argv[1], "w"), indent=1)
+    json.dump(out, open(args.out, "w"), indent=1)
