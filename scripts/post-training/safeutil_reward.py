@@ -1,4 +1,5 @@
-"""verl custom reward for SafeUtil: R = r_safety + r_task + r_fmt + r_degen - p_len, by row kind (safeutil.py has the table).
+"""verl custom reward for SafeUtil: R = r_safety + r_task + r_fmt + r_degen + r_repeat - p_len, by row kind (safeutil.py
+has the table).
 
 custom_reward_function.path=scripts/post-training/safeutil_reward.py, custom_reward_function.name=compute_score.
 Both loops put their summary in extra_info["mosaic"] (verl needs the same extra_fields keys from every agent-loop
@@ -30,9 +31,10 @@ def judge_actor():
 async def compute_score(data_source, solution_str, ground_truth, extra_info=None, **kwargs):
     kind = extra_info["kind"]
     fulfillable = int(extra_info["fulfillable"])
-    failures, task_score, reference, context = 0, None, None, None
+    failures, task_score, reference, context, messages, observations = 0, None, None, None, None, None
     summary = extra_info["mosaic"]
     if kind == "astb":
+        observations = summary.get("observations")
         turns = [mosaic.parse_turn(text) for text in summary["turns"]]
         if fulfillable and safeutil.refusal_index(turns) is None:
             task = json.loads(extra_info["task_json"])
@@ -42,10 +44,12 @@ async def compute_score(data_source, solution_str, ground_truth, extra_info=None
         turns = [mosaic.parse_turn(summary["text"])]
         sample = json.loads(extra_info["sample_json"])
         reference = sample.get("reference")
-        context = safeutil.context_text(sample.get("messages"))
+        messages = sample.get("messages")
+        context = safeutil.context_text(messages)
     result = safeutil.score(kind, fulfillable, turns, summary["well_formed"], summary["turn_lengths"],
                             task_score=task_score, reference=reference, context=context,
                             truncated=summary["status"] in ("truncated", "turn_limit"),
+                            messages=messages, observations=observations,
                             reward_version=int(extra_info.get("reward_version", safeutil.REWARD_VERSION)))
     status = summary["status"]
     result.update(target=str((reference or {}).get("type", "call") if reference else ""), kind=kind, fulfillable=float(fulfillable), task_id=str(extra_info["task_id"]),

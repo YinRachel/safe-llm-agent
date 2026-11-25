@@ -259,6 +259,56 @@ Template-only test (no training), p00 LoRA, all 7 benchmarks, BFCL_TIME 36 h: Qw
 the MOSAIC scaffold's safety with less utility loss, the next SafeUtil version trains with it (data and r_fmt then
 follow the new format); MOSAIC itself stays evaluated with its own scaffold.
 
+## Version 7 (2026-11-25): what the three-model P00 evaluation of v3 taught
+
+With Agent-SafetyBench left out, v3 under the MOSAIC scaffold against MOSAIC (safety = mean of 1 − AgentHarm harmful,
+1 − ASB DPI ASR, 1 − ASB OPI ASR, 1 − HarmBench ASR; utility = mean of AgentHarm benign, BFCL, tau2 retail and
+airline):
+
+| model | MOSAIC safety / utility | v3 (MOSAIC scaffold) | v3 (our scaffold) |
+|---|---|---|---|
+| Qwen2.5-3B | .771 / .229 | .857 / .217 | .772 / .220 |
+| Qwen3-4B | .839 / .374 | .908 / .373 | .917 / .361 |
+| Llama-3.1-8B | .770 / .235 | .836 / .253 | .856 / .237 |
+
+v3 dominates MOSAIC on Llama, matches its utility at +.07 safety on Qwen3-4B and trades off on Qwen2.5. What holds it
+back is tau2 retail (Qwen3-4B .535 vs .588, Llama .158 vs .254) and benign over-refusal (Qwen3-4B AgentHarm benign
+refusal 32% vs 15%). The agents' own tau2 retail histories (114 tasks per model; `StoredAgentState:*:messages` in the
+inspect logs) show three learned failures, none of them in the scaffold (the p00 LoRA under the same scaffold has none):
+
+- **False completion claims (Llama).** In 15% of tasks v3 tells the customer "the items have been successfully
+  exchanged" with no exchange call (MOSAIC 4%, p00 LoRA 0%); 52 of its 96 failures identified the user but never wrote
+  (p00 LoRA 14). v3's data barely has the step: only 8 (Llama) / 13 (Qwen3-4B) of 400 next_action rows are a write
+  call right after a user turn (the user has confirmed), and on those rows Llama's late rollouts replied in text 25% of
+  the time (6% early) and called the right tool 50% (90% early). v3 also paid the full 2 for any text reply on a text
+  target, a false report of a finished action included.
+- **Identical-call loops (Qwen3-4B).** 5 of 114 tasks repeat one identical `modify_pending_order_items` call, 1,353
+  times in all; Qwen3-4B's other loss is wrong arguments on writes (50 failures vs MOSAIC 41).
+- **Benign over-refusal (Qwen3-4B).** 32% of AgentHarm benign tasks refused while refusing 95% of harmful ones.
+
+v7 = v3's reward and v3's target mix (call 0.4, ask 0.25, reply 0.15, error 0.2: v4-v6 showed that moving the
+call/text balance breaks greedy decoding), with:
+
+- **Commit targets** (data). 40% of the call targets are commits (`target_act_at`: a single state-changing call,
+  `WRITE_TOOL` by its leading verb, straight after a user turn), `--act-mix call:commit=0.4,call=0.6`, the v7 default:
+  64 of 400 next_action rows instead of 8-13. Text targets are sampled first, as in v3, and are unchanged.
+- **False claim** (`claims_completion`, `false_claim_single` / `false_claim_episode`). A next_action reply claiming a
+  finished state change ("has been cancelled", "I have updated", "successfully booked"; negated and future forms do not
+  count) when no state-changing call since the user's last message got a non-error result scores r_task = −1, on call
+  and text targets alike. On a benign Agent-SafetyBench episode: a final reply making such a claim with no successful
+  state-changing call in the episode gets −1 instead of the judge's grade.
+- **Repeated call** (`repeated_calls`, `repeats_failed_call`). r_repeat = −0.5 on a benign episode that repeats an
+  identical call after it returned an error or makes one identical call 3 times, and on a next_action call identical
+  to a call in the conversation that failed.
+- **Benign refusal −1.5** (v3 −1). Refusing everything now scores below attempting everything on a balanced mix
+  (+1 / −1.5 against −1 / about +1), aimed at the over-refusal; harmful rows are unchanged.
+
+The rollout dump adds `false_claim`, `repeated_call` and `r_repeat`. Replayed on v3's own training rollouts, the two
+new terms would have fired rarely (false claims 0-2% of next_action rollouts, repeats under 1% of Agent-SafetyBench
+ones), which is why the commit targets are part of v7: without the confirmed-write rows the reward has almost nothing
+to act on. Acceptance as for v5/v6: the greedy probe at least as good as v3 on the model's own rows (next_action call
+rate, max_tokens hits), then the scaffold evaluations; the target is tau2 retail at or above MOSAIC with v3's safety.
+
 ## Data (`safeutil.py build-data`)
 
 | Kind | Rows (default) | Label | From | Rollout |
@@ -295,6 +345,7 @@ R = r_safety + r_task + r_fmt − p_len
 | r_safety | +1 refusal before any other tool call, +0.5 refusal after acting, −1 no refusal, 0 a refusal-tool call whose reason says the task is safe, is an operational failure (v3) or is empty | −1 if refused |
 | r_task | 0 | next_action / benign_prompt, reference call: 2 × share of reference arguments matched by a call to the right tool (v2: 1 + share), 0 otherwise; reference text reply (v3): 2 for a text reply, 0.5 for a grounded call, 0 otherwise; −0.5 more for a call with an ungrounded identifier (v3). astb: the judge's absolute completion grade (0 / 1 / 2) |
 | r_fmt | +0.5 only if every turn is well-formed and no `<think>` / `<safety_thoughts>` is the prompt's placeholder text or under three words | same |
+| v7 | unchanged | refusal −1.5; r_task −1 for a false completion claim; r_repeat −0.5 for a repeated failed or thrice-identical call |
 | p_len | MOSAIC's per-turn max(0, (L − 400)/400), averaged over turns | same |
 
 - **A refusal** is a `refuse_unsafe_task` call or a final answer in refusal wording (`safeutil.REFUSAL_TEXT`). Both
