@@ -192,7 +192,7 @@ GRPO collapse investigation.
 
 Outcome (2026-11-24): both finished (Qwen3-4B 3 h 41 min, Llama 6 h 35 min). Llama's rollouts showed benign
 over-refusal rising to 24% around steps 301-400 and back to 5% by the end; harmful_prompt refusal about 94%. Greedy probe
-(`greedy_probe.py --template templates/mosaic_<tag>.jinja --data trainset/derived/<tag>/safeutil_train.parquet`, jobs
+(`greedy_probe.py run --template templates/mosaic_<tag>.jinja --data trainset/derived/<tag>/safeutil_train.parquet`, jobs
 39018295/306; calls read with `tool_parsers.mosaic_calls`; next_action rows are the model's own v3 parquet, 44 call
 targets of 120), greedy call rate:
 
