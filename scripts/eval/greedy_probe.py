@@ -17,7 +17,10 @@ run:
               the edge (Qwen2.5-3B under the MOSAIC scaffold) then flips outcome. The spread across passes is the
               probe's own noise; one pass is not enough to tell checkpoints apart.
   --dtype     vLLM dtype (default auto = the checkpoint's bf16); float32 is the reference without bf16 rounding
-  --max-num-seqs  cap on sequences decoded at once (default: vLLM's), to mimic an eval's concurrency
+  --max-num-seqs  cap on sequences decoded at once (default 8; 0 = vLLM's 256). The benchmarks send 4 requests at
+              a time (evaluate.py --concurrency 4). With 150-430 sequences decoded together in bf16 on an A40, Qwen2.5
+              SafeUtil v3 looped or garbled its calls (simple requests called .20-.50, confirmed writes .42-.92, outcomes
+              changing between passes); capped at 8 it matches fp32 (1.00 / 1.00, the same outcome in every pass).
 
 Each case is scored as the scaffold evals parse it (tool_parsers.mosaic_calls: a malformed <tool_call> block means no
 call). Cases fall into classes: simple (should call), and for next_action rows commit (a write call right after the user
@@ -262,7 +265,7 @@ def main(argv=None):
     r.add_argument("--rows", type=int, default=0)
     r.add_argument("--repeats", type=int, default=3)
     r.add_argument("--dtype", default="auto", help="vLLM dtype; float32 gives a reference free of bf16 rounding")
-    r.add_argument("--max-num-seqs", type=int, default=0, help="cap on concurrent sequences (0 = vLLM default)")
+    r.add_argument("--max-num-seqs", type=int, default=8, help="cap on concurrent sequences (0 = vLLM default)")
     r.add_argument("out")
     r.add_argument("spec", help="TAG=MODEL_DIR")
     c = sub.add_parser("compare")
