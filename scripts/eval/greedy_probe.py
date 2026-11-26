@@ -16,6 +16,8 @@ run:
               deterministic across batches: which prompts share a batch shifts the bf16 arithmetic, and a model near
               the edge (Qwen2.5-3B under the MOSAIC scaffold) then flips outcome. The spread across passes is the
               probe's own noise; one pass is not enough to tell checkpoints apart.
+  --dtype     vLLM dtype (default auto = the checkpoint's bf16); float32 is the reference without bf16 rounding
+  --max-num-seqs  cap on sequences decoded at once (default: vLLM's), to mimic an eval's concurrency
 
 Each case is scored as the scaffold evals parse it (tool_parsers.mosaic_calls: a malformed <tool_call> block means no
 call). Cases fall into classes: simple (should call), and for next_action rows commit (a write call right after the user
@@ -223,7 +225,8 @@ def run(args):
         template = f.read()
     cases = simple_cases() + next_action_cases(list(pd.read_parquet(args.data).extra_info), args.rows)
     tag, path = args.spec.split("=", 1)
-    llm = LLM(path, max_model_len=16384, seed=42, gpu_memory_utilization=0.85)
+    extra = dict(max_num_seqs=args.max_num_seqs) if args.max_num_seqs else {}
+    llm = LLM(path, max_model_len=16384, seed=42, gpu_memory_utilization=0.85, dtype=args.dtype, **extra)
     tok = llm.get_tokenizer()
     # simple: as evaluation renders it (the scaffold template adds the MOSAIC system prompt and refusal tool);
     # next_action: as training renders it (the rows already carry both), with the model's own template.
@@ -243,7 +246,7 @@ def run(args):
         print(tag, f"pass {k}", json.dumps({c: round(s["right"], 3) for c, s in pass_summary(records).items()}),
               flush=True)
     out = dict(version=FORMAT_VERSION, tag=tag, model=path, data=args.data, rows=args.rows, template=args.template,
-               max_tokens=MAX_TOKENS, summaries=[pass_summary(p) for p in passes], stability=stability(passes),
+               max_tokens=MAX_TOKENS, dtype=args.dtype, max_num_seqs=args.max_num_seqs, summaries=[pass_summary(p) for p in passes], stability=stability(passes),
                passes=passes)
     with open(args.out, "w") as f:
         json.dump(out, f, indent=1)
@@ -258,6 +261,8 @@ def main(argv=None):
     r.add_argument("--data", default="trainset/derived/safeutil_train.parquet")
     r.add_argument("--rows", type=int, default=0)
     r.add_argument("--repeats", type=int, default=3)
+    r.add_argument("--dtype", default="auto", help="vLLM dtype; float32 gives a reference free of bf16 rounding")
+    r.add_argument("--max-num-seqs", type=int, default=0, help="cap on concurrent sequences (0 = vLLM default)")
     r.add_argument("out")
     r.add_argument("spec", help="TAG=MODEL_DIR")
     c = sub.add_parser("compare")
