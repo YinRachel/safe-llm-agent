@@ -370,7 +370,9 @@ v8 = v7 with:
 
 - **Deny targets** (data, `--reward-version 8` builds only). `target_type(..., deny=True)` types an APIGen-MT text reply
   that declines under the policy (`is_policy_denial`: "not eligible", "cannot be cancelled", "I cannot assist with the
-  cancellation", ...; a request for missing details is not one) as `deny`; the default v8 mix is call .36, ask .225,
+  cancellation", ...; at most 500 characters, no list lines, no completion claim, not a request for missing details:
+  the first build without those limits typed 20 of its 40 deny rows from reservation summaries that only mention a
+  restriction) as `deny`; the default v8 mix is call .36, ask .225,
   reply .135, error .18, deny .1 (40 of 400 rows), commits still 40% of the calls. The reference is
   `{"type": "deny", "text": ...}`: a text reply scores 2, a grounded non-write call 0.5, a write call −1
   (`DENY_WRITE_PENALTY`), the refusal tool −1.5 (benign refusal, unchanged).

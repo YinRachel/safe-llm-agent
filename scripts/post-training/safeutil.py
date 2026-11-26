@@ -642,10 +642,19 @@ POLICY_DENIAL = re.compile(
     r"(?:cannot|can't) proceed with (?:the |this |that |your )?(?:cancel|modif|chang|refund|return|exchang|upgrad))",
     re.I)
 MISSING_DETAILS = re.compile(r"\bwithout (?:the|your|a|an) |please provide|could you (?:please )?provide", re.I)
+# A reservation summary that lists what can and cannot be changed mentions a restriction without declining anything;
+# the first v8 build typed 20 of its 40 deny rows from such summaries (and one completion report).
+LIST_LINE = re.compile(r"^\s*(?:\d+\.|[-*\u2022])\s", re.M)
+DENY_MAX_CHARS = 500
+# claims_completion's verbs miss upgrades; kept out of COMPLETION_CLAIM so v7's false-claim term stays as it ran.
+UPGRADE_DONE = re.compile(r"\b(?:has|have) (?:now )?been (?:successfully )?(?:upgraded|downgraded)\b", re.I)
 
 
 def is_policy_denial(text):
-    return bool(POLICY_DENIAL.search(text or "")) and not MISSING_DETAILS.search(text or "")
+    """A short reply that declines under the policy: no list, no completion claim, not a request for details."""
+    text = text or ""
+    return (bool(POLICY_DENIAL.search(text)) and len(text) <= DENY_MAX_CHARS and not MISSING_DETAILS.search(text)
+            and not LIST_LINE.search(text) and not claims_completion(text) and not UPGRADE_DONE.search(text))
 ERROR_RESULT = re.compile(r"^\s*\W*error\b|not found|does not exist|\binvalid\b", re.I)
 INLINE_CALL = re.compile(r"\[\s*\{\s*\"|\"name\"\s*:|<tool_call>")
 

@@ -329,7 +329,10 @@ class Version8(unittest.TestCase):
             self.assertTrue(safeutil.is_policy_denial(text), text)
         for text in ["I cannot proceed with the booking without the dates of birth for each passenger.",
                      "Shall I cancel it? (yes/no)", "Your reservation has been cancelled.",
-                     "I cannot find order #W1. Could you check the number?"]:
+                     "I cannot find order #W1. Could you check the number?",
+                     "Your reservation has been upgraded; note that basic economy cannot be modified.",
+                     "Here is your reservation:\n- Cabin: basic economy\n- Basic economy flights cannot be changed.",
+                     "Unfortunately this order is not eligible for a refund. " * 12]:
             self.assertFalse(safeutil.is_policy_denial(text), text)
 
     def test_deny_targets(self):
