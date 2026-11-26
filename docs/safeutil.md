@@ -309,6 +309,35 @@ ones), which is why the commit targets are part of v7: without the confirmed-wri
 to act on. Acceptance as for v5/v6: the greedy probe at least as good as v3 on the model's own rows (next_action call
 rate, max_tokens hits), then the scaffold evaluations; the target is tau2 retail at or above MOSAIC with v3's safety.
 
+## Greedy probe audit (2026-11-26): the probe, not the checkpoints, was failing on Qwen2.5
+
+v7 Qwen2.5 (GRPO 39068901; 500 steps, KL ~0.02, tracking v3) "failed" the single-pass probe (39102674: next_action
+call .59 vs v3 .66 on v7's rows), as v6 had. Auditing the probe showed its Qwen2.5 numbers were unreliable:
+
+- The same v3 checkpoint on the same 30 simple prompts gave 0/30 identical greedy outputs across three probe runs,
+  and the outcome changed on 20-23 of them. Only the other prompts in the batch differed.
+- Probing v3 on 120 rows instead of all 400 dropped confirmed writes from .91 to .42-.58 (3 passes each).
+- All on v7's 400 rows plus the 30 simple requests, 3 passes, Qwen2.5 v3 (`greedy_probe.py run`):
+
+| setting | simple requests | confirmed writes | reply rows | same outcome every pass |
+|---|---|---|---|---|
+| bf16, A40, uncapped (150-430 sequences at once; the old probe) | .20-.50 | .42-.92 | .83-.93 | .77-.93 |
+| fp32, A40 | 1.00 | 1.00 | 1.00 | 1.00 |
+| bf16, A40, at most 8 sequences at once | 1.00 | 1.00 | 1.00 | 1.00 (case for case = fp32) |
+| bf16, H100, uncapped (120 rows) | 1.00 | 1.00 | 1.00 | 1.00 |
+
+So the loops, garbled calls and run-to-run flips were large bf16 decode batches on the A40, not the weights. Training
+(H100) and the benchmarks (A40 but `evaluate.py --concurrency 4`) are in the clean regime; only the probe was not.
+v4's loop was real: it broke the benchmarks' own preflight at 4 requests. The probe now defaults to
+`--max-num-seqs 8`, runs 3 passes in shuffled order, classes rows (simple, commit, call, error_call, ask, reply,
+error) and has `greedy_probe.py compare NEW.json OLD.json` (paired McNemar on the per-case majority vote).
+
+Clean probe, v7 vs v3 on v7's 400 rows (39103440 vs 39102966): next_action right .92 vs .91 (p .53), so v7 passes
+the gate. Confirmed writes 1.00 both; v7 retries a call after a tool error where that is the target (error_call .87
+vs 0, 13:0) but calls where it should reply (reply .87 vs 1.00, 0:8, p .008); simple requests .90 vs 1.00 (0:2).
+Earlier single-pass verdicts on Qwen2.5 (v6 parked, v4/v5 call rates) were taken in the bad regime; v6 also called
+on error targets in that regime (.38 vs 1.00) and has not been re-probed.
+
 ## Data (`safeutil.py build-data`)
 
 | Kind | Rows (default) | Label | From | Rollout |
