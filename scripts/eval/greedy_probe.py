@@ -47,7 +47,7 @@ from safeutil import WRITE_TOOL  # noqa: E402  the commit rule v7 trains on
 FORMAT_VERSION = 2
 MAX_TOKENS = 512
 CALL_CLASSES = ("simple", "commit", "call", "error_call")
-TEXT_CLASSES = ("ask", "reply", "error")
+TEXT_CLASSES = ("ask", "reply", "error", "deny")  # deny: v8 policy-denial rows (right = no call)
 CLASSES = CALL_CLASSES + TEXT_CLASSES
 
 
@@ -91,7 +91,7 @@ def simple_cases():
 
 # ----------------------------------------------------------------------------- next_action rows (rendered as trained)
 def row_class(sample):
-    """Probe class of a next_action sample: commit / call / error_call (target is a call) or ask / reply / error."""
+    """Probe class of a next_action sample: commit / call / error_call (target is a call) or ask / reply / error / deny."""
     target = sample["target_type"]
     reference = sample.get("reference") or {}
     if reference.get("type") == "call":

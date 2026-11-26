@@ -338,6 +338,52 @@ vs 0, 13:0) but calls where it should reply (reply .87 vs 1.00, 0:8, p .008); si
 Earlier single-pass verdicts on Qwen2.5 (v6 parked, v4/v5 call rates) were taken in the bad regime; v6 also called
 on error targets in that regime (.38 vs 1.00) and has not been re-probed.
 
+## Version 8 (2026-11-26): what the Qwen2.5 v7 evaluation and the Qwen3-4B v7 probe taught
+
+Qwen2.5 v7 against MOSAIC with Agent-SafetyBench left out: MOSAIC scaffold safety .822 (MOSAIC .771), our scaffold
+.761 / utility .222 (MOSAIC .229). v7 doubles BFCL (.121 vs .062) and tau2 retail (.21-.25 vs .105) but tau2 airline
+falls to .10-.14 (MOSAIC .30, v3 .18-.22). In 20 of the 50 airline tasks the expected outcome is no change (the policy
+forbids the request):
+
+| model | pass | pass, no-write tasks | pass, write tasks | wrote on a no-write task | transfer to human |
+|---|---|---|---|---|---|
+| MOSAIC | 15 | 14/20 | 1/30 | 10/20 | 72% |
+| v3, MOSAIC scaffold | 11 | 8/20 | 3/30 | 13/20 | 16% |
+| v7, MOSAIC scaffold | 7 | 4/20 | 3/30 | 16/20 | 14% |
+| v7, our scaffold | 5 | 4/20 | 1/30 | 15/20 | 14% |
+
+All 10 tasks MOSAIC passes and both v7 runs fail are no-write tasks: v7 cancels uninsured basic-economy reservations,
+changes flights and sends certificates the policy forbids. The reward never showed a policy denial as right:
+`target_type` drops any APIGen-MT reply with refusal wording ("I cannot assist with the cancellation of this
+reservation"), so none of the pool's policy denials (about 190 dialogs, mostly airline) were targets, and on a
+next_action row such a reply scored as a benign refusal (−1 in v3, −1.5 in v7). v7's commit rows then pushed writes
+further (it writes in 80% of airline tasks, v3 66%).
+
+Qwen3-4B v7 failed the clean probe against v3 on its own rows (next_action .90 vs .93, p .014; calls .76 vs .92,
+confirmed writes .83 vs .95): 20 of its 23 misses ask the user to confirm, often before a read call and 5 times after
+the user already said yes. Its training rollouts on call targets called .93 / .99 / .67 of the time at steps 1-50 /
+201-250 / 451-500 (Qwen3-4B v3 .88 / .70 / .77, Qwen2.5 v3 .81 / .70 / .52). The reward was consistent (late on: a call
+scored 1.79, a text reply 0), so the drift came from the text targets, which pay 2 for any text reply including a
+confirmation question, and from groups that answer a row only in text: all score 0, so GRPO has nothing to learn from.
+
+v8 = v7 with:
+
+- **Deny targets** (data, `--reward-version 8` builds only). `target_type(..., deny=True)` types an APIGen-MT text reply
+  that declines under the policy (`is_policy_denial`: "not eligible", "cannot be cancelled", "I cannot assist with the
+  cancellation", ...; a request for missing details is not one) as `deny`; the default v8 mix is call .36, ask .225,
+  reply .135, error .18, deny .1 (40 of 400 rows), commits still 40% of the calls. The reference is
+  `{"type": "deny", "text": ...}`: a text reply scores 2, a grounded non-write call 0.5, a write call −1
+  (`DENY_WRITE_PENALTY`), the refusal tool −1.5 (benign refusal, unchanged).
+- **Refusal wording on next_action rows is an answer.** Only the refusal tool counts as a refusal there; a text reply
+  is scored by r_task against the reference (so "I'm sorry, basic economy cannot be cancelled" no longer costs −1.5).
+  Other row kinds are unchanged.
+- **Text on a call target −0.5** (`TEXT_ON_CALL_PENALTY`, was 0), commit rows included, so an all-text group is not
+  a free 0 and a confirmation question after the user's yes costs.
+
+v3 and v7 parquets rebuild unchanged (deny typing is off below version 8). Acceptance: the clean greedy probe at least
+as good as v7 and v3 on the model's own rows (the probe reports `deny` rows: right = no call), then the scaffold
+evaluations; the targets are tau2 airline no-write tasks back to v3 or better and Qwen3-4B call rows back to v3.
+
 ## Data (`safeutil.py build-data`)
 
 | Kind | Rows (default) | Label | From | Rollout |
