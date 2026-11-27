@@ -386,6 +386,17 @@ v3 and v7 parquets rebuild unchanged (deny typing is off below version 8). Accep
 as good as v7 and v3 on the model's own rows (the probe reports `deny` rows: right = no call), then the scaffold
 evaluations; the targets are tau2 airline no-write tasks back to v3 or better and Qwen3-4B call rows back to v3.
 
+## Cleanup (2026-11-27): v4-v7 artefacts deleted on Viking
+
+To free scratch (426G -> 363G against the 400G soft quota), all v4-v7 run artefacts were deleted, with Rachel's approval:
+the merged models and run folders (rollouts, eval outputs) of v4 38858748/49, v5 38889183/84, v6 38974668/69 and v7
+39066110-12 (smokes), 39068901 (Qwen2.5), 39102695 (Qwen3-4B), 39102696 (Llama); the v4 and v7 parquets (all three
+models); and the v7 side copies (`v7repo`, `v7test`). The unfinished Qwen2.5 v7 MOSAIC-scaffold BFCL eval 39103502 was
+cancelled, and Qwen2.5 v7's 13 finished evals were never pulled to `paper_results`, so the v7 numbers above survive only
+in this document and the session notes. `trainset/derived/safeutil_train.parquet` (it held v6) is again the v3 data
+(byte-identical copy of `safeutil_train.v3.parquet`). Kept: v1-v3 and v8 parquets, all v3 runs, the v8 smoke folder.
+The code paths for reward versions 4-7 stay in `safeutil.py`, so any of them can be rebuilt and retrained.
+
 ## Data (`safeutil.py build-data`)
 
 | Kind | Rows (default) | Label | From | Rollout |
