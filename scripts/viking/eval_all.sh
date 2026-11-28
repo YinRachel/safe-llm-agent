@@ -26,11 +26,15 @@ source scripts/viking/results_dir.sh
 # SCAFFOLD=safeutil: our scaffold (templates/safeutil_scaffold_system.txt, docs/safeutil.md): the same wrapping, refusal
 #   tool and `mosaic` output parser, with a different system text. Templates templates/safeutil_scaffold[_<tag>].jinja,
 #   tag suffix -suscaffold, outputs in <eval root>/suscaffold/.
+# SCAFFOLD=safeutil2: our scaffold v2 (templates/safeutil_scaffold_v2_system.txt: decide on safety before acting, no
+#   repeated confirmations or unmade-action claims, policy denials as plain text, sensitive-but-legitimate tasks are
+#   ordinary). Templates templates/safeutil_scaffold_v2[_<tag>].jinja, tag suffix -suscaffold2, outputs in suscaffold2/.
 case "${SCAFFOLD:-}" in
     mosaic) scaffold_prefix=mosaic; scaffold_suffix=mosaic ;;
     safeutil) scaffold_prefix=safeutil_scaffold; scaffold_suffix=suscaffold ;;
+    safeutil2) scaffold_prefix=safeutil_scaffold_v2; scaffold_suffix=suscaffold2 ;;
     "") scaffold_prefix= ;;
-    *) echo "Unknown SCAFFOLD: $SCAFFOLD (mosaic, safeutil)" >&2; exit 2 ;;
+    *) echo "Unknown SCAFFOLD: $SCAFFOLD (mosaic, safeutil, safeutil2)" >&2; exit 2 ;;
 esac
 if [[ -n "$scaffold_prefix" ]]; then
     [[ -z "$CHAT_TEMPLATE" ]] || { echo "SCAFFOLD=$SCAFFOLD brings its own template; drop CHAT_TEMPLATE" >&2; exit 1; }
